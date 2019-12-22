@@ -1,3 +1,5 @@
+import json
+
 from AST import AST
 from tokenizer import TokenList
 
@@ -16,6 +18,11 @@ if __name__ == '__main__':
     tokens = TokenList(code)
     logger.info('Building AST-Tree')
     tree = AST(tokens)
-    logger.info('AST-Tree Built')
-    print(tree)
+    logger.info('AST Built')
+    logger.info('Writing AST to file...')
+    jsonTreeOutput = open("ast.json", "w+")
+    jsonTreeOutput.write(json.dumps(tree.to_dict(), indent=4))
+    jsonTreeOutput.flush()
+    jsonTreeOutput.close()
+    logger.info('AST written to file.')
     logger.info('Shutdown...')

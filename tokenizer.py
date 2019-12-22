@@ -44,12 +44,13 @@ class Token:
 class TokenList:
     tokens: List[Token]
     length: int
-    currentTokenIndex = 0
+    currentTokenIndex: int
 
     def __init__(self, rawCode: str):
         self.tokens = [Token(x) for x in preprocess_code(rawCode)]
         self.tokens.append(Token.get_eof())
         self.length = len(self.tokens)
+        self.currentTokenIndex = 0
 
     def __len__(self):
         return self.length
