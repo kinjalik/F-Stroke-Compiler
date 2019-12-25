@@ -1,17 +1,17 @@
 from enum import Enum
 from typing import Generic, List, Any
-from tokenizer import TokenList, Terminal as TokenType
+from tokenizer import TokenList, Terminal
 
 import logging
 
 tokenList: TokenList
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG, filename='logs.txt')
 
 logger = logging.getLogger('AST_Builder')
 logger.setLevel(logging.DEBUG)
 
 
-class Type(Enum):
+class AstNodeType(Enum):
     Program = 0
     List = 1
     Element = 2
@@ -22,11 +22,11 @@ class Type(Enum):
 
 
 class AstNode:
-    type: Type
+    type: AstNodeType
     value: Any
     child_nodes: List = list()
 
-    def __init__(self, type: Type, value: Any):
+    def __init__(self, type: AstNodeType, value: Any):
         self.type = type
         self.value = value
         self.child_nodes = list()
@@ -52,10 +52,10 @@ class AstNode:
     def process_program():
         global tokenList
         logger.debug('Building node: Program')
-        node = AstNode(Type.Program, None)
+        node = AstNode(AstNodeType.Program, None)
         token = tokenList.get_current_token()
-        while token.type != TokenType.EOF:
-            if token.type == TokenType.SPACE:
+        while token.type != Terminal.EOF:
+            if token.type == Terminal.SPACE:
                 tokenList.inc()
             node.add_child(AstNode.process_element())
             token = tokenList.get_current_token()
@@ -65,31 +65,31 @@ class AstNode:
     def process_element():
         global tokenList
         logger.debug('Building node: Element')
-        node = AstNode(Type.Element, None)
+        node = AstNode(AstNodeType.Element, None)
         token = tokenList.get_current_token()
-        if token.type == TokenType.Letter:
-            node.add_child(AstNode.process_atom())
-        elif token.type == TokenType.Digit:
-            node.add_child(AstNode.process_literal())
-        elif token.type == TokenType.LP:
-            node.add_child(AstNode.process_list())
+        if token.type == Terminal.Letter:
+            return AstNode.process_atom()
+        elif token.type == Terminal.Digit:
+            return AstNode.process_literal()
+        elif token.type == Terminal.LP:
+            return AstNode.process_list()
         return node
 
     @staticmethod
     def process_list():
         global tokenList
         logger.debug('Building node: List')
-        node = AstNode(Type.List, None)
+        node = AstNode(AstNodeType.List, None)
 
         token = tokenList.get_current_token()
-        assert token.type == TokenType.LP
+        assert token.type == Terminal.LP
         tokenList.inc()
         token = tokenList.get_current_token()
-        while token.type == TokenType.SPACE and tokenList.get_next_token().type != TokenType.RP:
+        while token.type == Terminal.SPACE and tokenList.get_next_token().type != Terminal.RP:
             tokenList.inc()
             node.add_child(AstNode.process_element())
             token = tokenList.get_current_token()
-        assert token.type == TokenType.SPACE and tokenList.get_next_token().type == TokenType.RP
+        assert token.type == Terminal.SPACE and tokenList.get_next_token().type == Terminal.RP
         tokenList.inc()
         tokenList.inc()
         return node
@@ -106,15 +106,15 @@ class AstNode:
     def process_atom():
         global tokenList
         logger.debug('Building node: Atom')
-        node = AstNode(Type.Atom, None)
+        node = AstNode(AstNodeType.Atom, None)
 
         token = tokenList.get_current_token()
-        assert token.type == TokenType.Letter
+        assert token.type == Terminal.Letter
         value = token.value
 
         tokenList.inc()
         token = tokenList.get_current_token()
-        while token.type == TokenType.Letter or token.type == TokenType.Digit:
+        while token.type == Terminal.Letter or token.type == Terminal.Digit:
             value += token.value
             tokenList.inc()
             token = tokenList.get_current_token()
@@ -126,15 +126,15 @@ class AstNode:
     def process_literal():
         global tokenList
         logger.debug('Building node: Literal')
-        node = AstNode(Type.Literal, None)
+        node = AstNode(AstNodeType.Literal, None)
 
         token = tokenList.get_current_token()
-        assert token.type == TokenType.Digit
+        assert token.type == Terminal.Digit
         value = token.value
 
         tokenList.inc()
         token = tokenList.get_current_token()
-        while token.type == TokenType.Digit:
+        while token.type == Terminal.Digit:
             value += token.value
             tokenList.inc()
             token = tokenList.get_current_token()

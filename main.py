@@ -1,12 +1,13 @@
 import json
 
 from AST import AST
+from code_generator import generate_code
 from tokenizer import TokenList
 
 import logging
 
 # add filemode="w" to overwrite
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG, filename='logs.txt')
 logger = logging.getLogger('Main')
 logger.setLevel(logging.DEBUG)
 
@@ -25,4 +26,5 @@ if __name__ == '__main__':
     jsonTreeOutput.flush()
     jsonTreeOutput.close()
     logger.info('AST written to file.')
+    print(generate_code(tree))
     logger.info('Shutdown...')
