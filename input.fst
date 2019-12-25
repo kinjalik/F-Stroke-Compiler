@@ -1,3 +1,8 @@
 ( prog (
-    ( return ( plus ( divide ( times ( read 0 ) 9 ) 5 ) 32 ) )
+    ( setq x 10 )
+    ( cond
+      ( equal x 10 )
+      ( return 1 )
+      ( return 0 )
+    )
 ) )
