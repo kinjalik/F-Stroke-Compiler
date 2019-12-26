@@ -2,6 +2,9 @@ from typing import Any, List
 
 from AST import AST, AstNode, AstNodeType
 
+ADDRESS_LENGTH = 32
+assert ADDRESS_LENGTH <= 32
+
 getInstructionCode = {
     'STOP': '00',
     'ADD': '01',
@@ -28,11 +31,16 @@ getInstructionCode = {
     'JUMP': '56',
     'JUMPI': '57',
     'JUMPDEST': '5b',
-    'PUSH1': '60',
+    'PUSH': hex(0x60 + ADDRESS_LENGTH - 1)[2:],
     'DUP1': '80',
     'SWAP1': '90',
     'RETURN': 'f3'
 }
+
+
+def dec_to_hex(number: int, pad: int = 2 * ADDRESS_LENGTH):
+    return '0x{0:0{1}X}'.format(number, pad)[2:]
+
 
 opcodes_counter = 0
 
@@ -47,9 +55,14 @@ class Opcode:
         self.id = opcodes_counter
         opcodes_counter += 1
         self.name = name
-        self.extra_value = extra_value
-        if name == 'PUSH1':
-            opcodes_counter += 1
+        if extra_value is not None:
+            self.extra_value = extra_value
+        elif name == 'PUSH':
+            self.extra_value = dec_to_hex(0)
+        else:
+            self.extra_value = None
+        if name == 'PUSH':
+            opcodes_counter += ADDRESS_LENGTH
 
     def get_str(self):
         return f'{getInstructionCode[self.name]}{"" if self.extra_value is None else self.extra_value}'
@@ -71,44 +84,82 @@ class OpcodeList:
         return res
 
 
-atom_counter = 0
+class ContextFactory:
+    addrs_used: set
+
+    def __init__(self):
+        self.addrs_used = set()
+
+    def create_context(self):
+        return Context(self)
+
+    def take_address(self):
+        i = 1
+        while i in self.addrs_used:
+            i += 1
+        self.addrs_used.add(i)
+        return i
+
+    def free_address(self, number: int):
+        assert number in self.addrs_used
+        self.addrs_used.remove(number)
 
 
 class Context:
-    addrByName: dict
-    nameByAddr: dict
+    nameByNum: dict
+    numByName: dict
+    factory: ContextFactory
 
-    def __init__(self):
-        self.addrByName = {}
-        self.nameByAddr = {}
+    def __init__(self, factory: ContextFactory):
+        self.nameByNum = {}
+        self.numByName = {}
+        self.factory = factory
 
-    def add_atom(self, name: str):
-        global atom_counter
-        address = hex(atom_counter * 32)[2:]
-        while len(address) != 2:
-            address = '0' + address
-        self.addrByName[name] = address
-        self.nameByAddr[address] = name
-        atom_counter += 1
-        return address
+    def get_atom_addr(self, name: str):
+        if name in self.numByName:
+            return dec_to_hex(self.numByName[name] * 32)
+        number = self.factory.take_address()
+        self.nameByNum[number] = name
+        self.numByName[name] = number
+        return dec_to_hex(number * 32)
+
+    def __del__(self):
+        for name, number in self.numByName.items():
+            self.factory.free_address(number)
 
 
 def generate_code(ast: AST):
-    atom_counter = 0
-    opcode_counter = 0
     opcodes: OpcodeList = OpcodeList()
+    context_factory = ContextFactory()
     for el in ast.root.child_nodes:
-        context = Context()
+        context = context_factory.create_context()
         if el.child_nodes[0].value == 'prog':
             process_code_block(el.child_nodes[1], context, opcodes)
+            print('PROG DECLARED')
         else:
             # ToDo: Function declaration
             print('FUNC DECLARED')
+    print_readable_code(opcodes)
     return opcodes.get_str()
+
+
+def print_readable_code(opcodes: OpcodeList):
+    code_output = open('generated_code.ebc', 'w+')
+    for opcode in opcodes.list:
+        res = f"{dec_to_hex(opcode.id)}: {getInstructionCode[opcode.name]} "
+        res += f"{('  ' * ADDRESS_LENGTH) if opcode.name != 'PUSH' else opcode.extra_value} "
+        res += f"{opcode.name}"
+        if opcode.name == 'PUSH':
+            res += f" 0x{opcode.extra_value}"
+        res += '\n'
+        code_output.write(res)
+    code_output.flush()
+    code_output.close()
 
 
 def process_code_block(prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
     for call in prog_body.child_nodes:
+        print(call.to_dict())
         process_call(call, ctx, opcodes)
 
 
@@ -136,12 +187,18 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
         return BuiltIns.setq(call_body, ctx, opcodes)
     elif name == 'equal':
         return BuiltIns.equal(call_body, ctx, opcodes)
+    elif name == 'lesseq':
+        return BuiltIns.lesseq(call_body, ctx, opcodes)
     elif name == 'plus':
         return BuiltIns.plus(call_body, ctx, opcodes)
+    elif name == 'minus':
+        return BuiltIns.minus(call_body, ctx, opcodes)
     elif name == 'times':
         return BuiltIns.times(call_body, ctx, opcodes)
     elif name == 'divide':
         return BuiltIns.divide(call_body, ctx, opcodes)
+    elif name == 'while':
+        return BuiltIns.wwhile(call_body, ctx, opcodes)
     print(f'No builtin found for {name}')
     return 0
     # print(name)
@@ -151,23 +208,23 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
 
 
 def process_literal(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
-    value = '0x{0:0{1}X}'.format(int(call_body.value), 2)[2:]
-    opcodes.add('PUSH1', value)
+    value = dec_to_hex(call_body.value)
+    opcodes.add('PUSH', value)
 
 
 def process_atom(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     atom_name = call_body.value
-    atom_address = ctx.addrByName[atom_name]
-    opcodes.add('PUSH1', atom_address)
+    atom_address = ctx.get_atom_addr(atom_name)
+    opcodes.add('PUSH', atom_address)
     opcodes.add('MLOAD')
 
 
 class BuiltIns:
     @staticmethod
     def read(body: AstNode, ctx: Context, opcodes: OpcodeList):
-        argNum = body.child_nodes[1].value * 32
-        offset = '0x{0:0{1}X}'.format(argNum, 2)[2:]
-        opcodes.add('PUSH1', offset)
+        arg_num = body.child_nodes[1].value * 32
+        offset = dec_to_hex(arg_num)
+        opcodes.add('PUSH', offset)
         opcodes.add('CALLDATALOAD')
 
     @staticmethod
@@ -175,46 +232,46 @@ class BuiltIns:
         # Conditions check
         process_call(body.child_nodes[1], ctx, opcodes)
         # JUMP TO TRUE
-        opcodes.add('PUSH1', '00')
+        opcodes.add('PUSH')
         jump_from_check_to_true = len(opcodes.list) - 1
         opcodes.add('JUMPI')
         # JUMP TO ELSE
-        opcodes.add('PUSH1', '00')
+        opcodes.add('PUSH')
         jump_from_check_to_false = len(opcodes.list) - 1
         opcodes.add('JUMP')
         # TRUE BLOCK
         opcodes.add('JUMPDEST')
         block_id = opcodes.list[-1].id
-        opcodes.list[jump_from_check_to_true].extra_value = '0x{0:0{1}X}'.format(block_id, 2)[2:]
+        opcodes.list[jump_from_check_to_true].extra_value = dec_to_hex(block_id)
         process_call(body.child_nodes[2], ctx, opcodes)
-        opcodes.add('PUSH1', '00')
+        opcodes.add('PUSH', )
         jump_from_true_to_end = len(opcodes.list) - 1
         opcodes.add('JUMP')
         # FALSE BLOCK
         opcodes.add('JUMPDEST')
         block_id = opcodes.list[-1].id
-        opcodes.list[jump_from_check_to_false].extra_value = '0x{0:0{1}X}'.format(block_id, 2)[2:]
+        opcodes.list[jump_from_check_to_false].extra_value = dec_to_hex(block_id)
         if len(body.child_nodes) == 4:
             process_call(body.child_nodes[3], ctx, opcodes)
-        opcodes.add('PUSH1', '00')
+        opcodes.add('PUSH')
         jump_from_false_to_end = len(opcodes.list) - 1
+        opcodes.add('JUMP')
         # END
         opcodes.add('JUMPDEST')
         block_id = opcodes.list[-1].id
-        opcodes.list[jump_from_true_to_end].extra_value = '0x{0:0{1}X}'.format(block_id, 2)[2:]
-        opcodes.list[jump_from_false_to_end].extra_value = '0x{0:0{1}X}'.format(block_id, 2)[2:]
+        opcodes.list[jump_from_true_to_end].extra_value = dec_to_hex(block_id)
+        opcodes.list[jump_from_false_to_end].extra_value = dec_to_hex(block_id)
 
     @staticmethod
     def setq(body: AstNode, ctx: Context, opcodes: OpcodeList):
-        atomName = body.child_nodes[1].value
+        atom_name = body.child_nodes[1].value
         process_call(body.child_nodes[2], ctx, opcodes)
-        address = ctx.add_atom(atomName)
-        opcodes.add('PUSH1', address)
+        address = ctx.get_atom_addr(atom_name)
+        opcodes.add('PUSH', address)
         opcodes.add('MSTORE')
 
     @staticmethod
     def equal(body: AstNode, ctx: Context, opcodes: OpcodeList):
-        print(body.to_dict())
         for i in range(1, 3):
             process_call(body.child_nodes[i], ctx, opcodes)
         opcodes.add('EQ')
@@ -224,6 +281,13 @@ class BuiltIns:
         for i in range(1, 3):
             process_call(body.child_nodes[i], ctx, opcodes)
         opcodes.add('ADD')
+
+    @staticmethod
+    def minus(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        opcodes.add('SWAP1')
+        opcodes.add('SUB')
 
     @staticmethod
     def times(body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -241,8 +305,45 @@ class BuiltIns:
     @staticmethod
     def rreturn(body: AstNode, ctx: Context, opcodes: OpcodeList):
         process_call(body.child_nodes[1], ctx, opcodes)
-        opcodes.add('PUSH1', '00')
+        opcodes.add('PUSH')
         opcodes.add('MSTORE')
-        opcodes.add('PUSH1', '20')
-        opcodes.add('PUSH1', '00')
+        opcodes.add('PUSH', dec_to_hex(32))
+        opcodes.add('PUSH')
         opcodes.add('RETURN')
+
+    @staticmethod
+    def wwhile(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        print(body)
+        opcodes.add('JUMPDEST')
+        jumpdest_to_condition_check_id = dec_to_hex(opcodes.list[-1].id)
+        process_call(body.child_nodes[1], ctx, opcodes)
+        # if true: jump to while body
+        opcodes.add('PUSH')
+        jump_to_while_body = len(opcodes.list) - 1
+        opcodes.add('JUMPI')
+        # else: jump to while end
+        opcodes.add('PUSH')
+        jump_to_while_end = len(opcodes.list) - 1
+        opcodes.add('JUMP')
+
+        # while body
+        opcodes.add('JUMPDEST')
+        opcodes.list[jump_to_while_body].extra_value = dec_to_hex(opcodes.list[-1].id)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        opcodes.add('PUSH', jumpdest_to_condition_check_id)
+        opcodes.add('JUMP')
+        # while end
+        opcodes.add('JUMPDEST')
+        opcodes.list[jump_to_while_end].extra_value = dec_to_hex(opcodes.list[-1].id)
+
+    @staticmethod
+    def lesseq(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        process_call(body.child_nodes[1], ctx, opcodes)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        opcodes.add('EQ')
+        process_call(body.child_nodes[1], ctx, opcodes)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        # | n | b | EOS |
+        # b < n
+        opcodes.add('GT')
+        opcodes.add('OR')

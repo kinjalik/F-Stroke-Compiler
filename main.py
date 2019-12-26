@@ -15,7 +15,7 @@ if __name__ == '__main__':
     logger.info('Starting program...')
     inputFile = open('input.fst', 'r')
     code = inputFile.read()
-    logger.info('Tokenizing the code')
+    logger.info('TokenЩizing the code')
     tokens = TokenList(code)
     logger.info('Building AST-Tree')
     tree = AST(tokens)
