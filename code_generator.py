@@ -2,8 +2,8 @@ from typing import Any, List
 
 from AST import AST, AstNode, AstNodeType
 
-ADDRESS_LENGTH = 32
-assert ADDRESS_LENGTH <= 32
+ADDRESS_LENGTH = 4
+assert 32 >= ADDRESS_LENGTH >= 1
 
 getInstructionCode = {
     'STOP': '00',
@@ -64,8 +64,10 @@ class Opcode:
         if name == 'PUSH':
             opcodes_counter += ADDRESS_LENGTH
 
+        assert len(hex(self.id)[2:]) <= ADDRESS_LENGTH
+
     def get_str(self):
-        return f'{getInstructionCode[self.name]}{"" if self.extra_value is None else self.extra_value}'
+        return f'{getInstructionCode[self.name]}{"" if self.name != "PUSH" else self.extra_value}'
 
 
 class OpcodeList:
@@ -109,6 +111,7 @@ class Context:
     nameByNum: dict
     numByName: dict
     factory: ContextFactory
+    is_prog: bool = False
 
     def __init__(self, factory: ContextFactory):
         self.nameByNum = {}
@@ -131,13 +134,22 @@ class Context:
 def generate_code(ast: AST):
     opcodes: OpcodeList = OpcodeList()
     context_factory = ContextFactory()
+
+    # Set jump to main program body
+    opcodes.add('PUSH', dec_to_hex(0))
+    opcodes.add('JUMP')
+
     for el in ast.root.child_nodes:
         context = context_factory.create_context()
         if el.child_nodes[0].value == 'prog':
+            context.is_prog = True
+            opcodes.add('JUMPDEST')
+            opcodes.list[0].extra_value = dec_to_hex(opcodes.list[-1].id)
             process_code_block(el.child_nodes[1], context, opcodes)
             print('PROG DECLARED')
         else:
-            # ToDo: Function declaration
+            assert el.child_nodes[0].value == 'func'
+            Declared.process_func_decl(el, context, opcodes)
             print('FUNC DECLARED')
     print_readable_code(opcodes)
     return opcodes.get_str()
@@ -159,14 +171,13 @@ def print_readable_code(opcodes: OpcodeList):
 
 def process_code_block(prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
     for call in prog_body.child_nodes:
-        print(call.to_dict())
         process_call(call, ctx, opcodes)
 
 
 def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     # Processing syntax features: literals, atoms
     if call_body.type == AstNodeType.Literal:
-        return process_literal(call_body, ctx, opcodes)
+        return process_literal(call_body, opcodes)
 
     if call_body.type == AstNodeType.Atom:
         return process_atom(call_body, ctx, opcodes)
@@ -178,7 +189,9 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     # Processing pre-built functions
     name = call_body.child_nodes[0].value
     if name == 'read':
-        return BuiltIns.read(call_body, ctx, opcodes)
+        return BuiltIns.read(call_body, opcodes)
+    elif name == 'break':
+        return BuiltIns.bbreak(call_body, ctx, opcodes)
     elif name == 'cond':
         return BuiltIns.cond(call_body, ctx, opcodes)
     elif name == 'return':
@@ -187,6 +200,10 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
         return BuiltIns.setq(call_body, ctx, opcodes)
     elif name == 'equal':
         return BuiltIns.equal(call_body, ctx, opcodes)
+    elif name == 'nonequal':
+        return BuiltIns.nonequal(call_body, ctx, opcodes)
+    elif name == 'not':
+        return BuiltIns.nnot(call_body, ctx, opcodes)
     elif name == 'lesseq':
         return BuiltIns.lesseq(call_body, ctx, opcodes)
     elif name == 'plus':
@@ -199,7 +216,20 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
         return BuiltIns.divide(call_body, ctx, opcodes)
     elif name == 'while':
         return BuiltIns.wwhile(call_body, ctx, opcodes)
-    print(f'No builtin found for {name}')
+    elif name == 'greater':
+        return BuiltIns.greater(call_body, ctx, opcodes)
+    elif name == 'less':
+        return BuiltIns.less(call_body, ctx, opcodes)
+    elif name == 'or':
+        return BuiltIns.oor(call_body, ctx, opcodes)
+    elif name == 'and':
+        return BuiltIns.aand(call_body, ctx, opcodes)
+
+    if Declared.is_func_declared(name):
+        return process_declared_call(call_body, ctx, opcodes)
+
+    print(f'No builtin or declared found for {name}')
+
     return 0
     # print(name)
     # for i in range(1, len(call_body.child_nodes)):
@@ -207,7 +237,21 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     #     print(arg.type)
 
 
-def process_literal(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+def process_declared_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+    func_name = call_body.child_nodes[0].value
+    # Pushing back address
+    opcodes.add('PUSH', dec_to_hex(0))
+    back_address_push = len(opcodes.list) - 1
+    # Pushing arguments
+    for i in range(1, len(call_body.child_nodes)):
+        process_call(call_body.child_nodes[i], ctx, opcodes)
+    opcodes.add('PUSH', Declared.get_func_addr(func_name))
+    opcodes.add('JUMP')
+    opcodes.add('JUMPDEST')
+    opcodes.list[back_address_push].extra_value = dec_to_hex(opcodes.list[-1].id)
+
+
+def process_literal(call_body: AstNode, opcodes: OpcodeList):
     value = dec_to_hex(call_body.value)
     opcodes.add('PUSH', value)
 
@@ -221,7 +265,7 @@ def process_atom(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
 
 class BuiltIns:
     @staticmethod
-    def read(body: AstNode, ctx: Context, opcodes: OpcodeList):
+    def read(body: AstNode, opcodes: OpcodeList):
         arg_num = body.child_nodes[1].value * 32
         offset = dec_to_hex(arg_num)
         opcodes.add('PUSH', offset)
@@ -277,6 +321,20 @@ class BuiltIns:
         opcodes.add('EQ')
 
     @staticmethod
+    def nonequal(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        opcodes.add('EQ')
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('EQ')
+
+    @staticmethod
+    def nnot(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        process_call(body.child_nodes[1], ctx, opcodes)
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('EQ')
+
+    @staticmethod
     def plus(body: AstNode, ctx: Context, opcodes: OpcodeList):
         for i in range(1, 3):
             process_call(body.child_nodes[i], ctx, opcodes)
@@ -305,16 +363,32 @@ class BuiltIns:
     @staticmethod
     def rreturn(body: AstNode, ctx: Context, opcodes: OpcodeList):
         process_call(body.child_nodes[1], ctx, opcodes)
-        opcodes.add('PUSH')
-        opcodes.add('MSTORE')
-        opcodes.add('PUSH', dec_to_hex(32))
-        opcodes.add('PUSH')
-        opcodes.add('RETURN')
+        if ctx.is_prog:
+            opcodes.add('PUSH')
+            opcodes.add('MSTORE')
+            opcodes.add('PUSH', dec_to_hex(32))
+            opcodes.add('PUSH')
+            opcodes.add('RETURN')
+        else:
+            opcodes.add('SWAP1')
+            opcodes.add('JUMP')
+
+
+    while_count = 0
+    current_while = None
+
+    @staticmethod
+    def bbreak(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('JUMP', dec_to_hex(BuiltIns.current_while))
+        pass
 
     @staticmethod
     def wwhile(body: AstNode, ctx: Context, opcodes: OpcodeList):
-        print(body)
-        opcodes.add('JUMPDEST')
+        prev_while = BuiltIns.current_while
+        BuiltIns.current_while = BuiltIns.while_count
+        BuiltIns.while_count += 1
+        opcodes.add('JUMPDEST', dec_to_hex(BuiltIns.current_while))
         jumpdest_to_condition_check_id = dec_to_hex(opcodes.list[-1].id)
         process_call(body.child_nodes[1], ctx, opcodes)
         # if true: jump to while body
@@ -335,6 +409,11 @@ class BuiltIns:
         # while end
         opcodes.add('JUMPDEST')
         opcodes.list[jump_to_while_end].extra_value = dec_to_hex(opcodes.list[-1].id)
+        for i in range(len(opcodes.list)):
+            if opcodes.list[i].name == 'JUMP' and opcodes.list[i].extra_value == dec_to_hex(BuiltIns.current_while):
+                opcodes.list[i - 1].extra_value = dec_to_hex(opcodes.list[-1].id)
+                opcodes.list[i].extra_value = None
+        BuiltIns.current_while = prev_while
 
     @staticmethod
     def lesseq(body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -347,3 +426,81 @@ class BuiltIns:
         # b < n
         opcodes.add('GT')
         opcodes.add('OR')
+
+    '''
+    ( greater A B )
+    Stack: | B | A | EOS |
+    B < A
+    '''
+    @staticmethod
+    def greater(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1,3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        opcodes.add('LT')
+
+    @staticmethod
+    def less(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        process_call(body.child_nodes[1], ctx, opcodes)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        # | n | b | EOS |
+        # b < n
+        opcodes.add('GT')
+
+    @staticmethod
+    def oor(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1,3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        opcodes.add('OR')
+
+    @staticmethod
+    def aand(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        opcodes.add('AND')
+
+'''
+How to use function declarations:
+1. Place back address on the stack:
+    - Eg.;
+        77: PUSH     / arguments /
+        78: JUMP     / to the function start /
+        79: JUMPDEST / back address /
+    - 79 is an address you are looking for
+2. Place all arguments on the stack
+    - Last argument must be on the top of stack
+    - Eg.: ( modulo ( 
+               ( plus 2 3 ) 
+               2
+             ) 
+           ) 
+    - Firstly, calculate ( plus 2 3 ) and place result onto the stack: | 2 + 3 = 5 | EOS |
+    - Then, place 2: | 2 | 5 | EOS | 
+'''
+
+
+class Declared:
+    addrByName: dict = {}
+
+    @staticmethod
+    def process_func_decl(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        name = body.child_nodes[1].value
+        opcodes.add('JUMPDEST')
+        Declared.addrByName[name] = dec_to_hex(opcodes.list[-1].id)
+        arguments = body.child_nodes[2].child_nodes
+        # Allocating memory for arguments, adding them to the context
+        for atom in reversed(arguments):
+            address = ctx.get_atom_addr(atom.value)
+            opcodes.add('PUSH', address)
+            opcodes.add('MSTORE')
+        process_call(body.child_nodes[3], ctx, opcodes)
+        opcodes.add('SWAP1')
+        opcodes.add('JUMP')
+
+    @staticmethod
+    def is_func_declared(name: str):
+        return name in Declared.addrByName
+
+    @staticmethod
+    def get_func_addr(name: str):
+        assert Declared.is_func_declared(name)
+        return Declared.addrByName[name]
