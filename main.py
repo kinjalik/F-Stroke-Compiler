@@ -1,4 +1,5 @@
 import json
+import sys
 
 from AST import AST
 from code_generator import generate_code
@@ -7,7 +8,7 @@ from tokenizer import TokenList
 import logging
 
 # add filemode="w" to overwrite
-logging.basicConfig(level=logging.DEBUG, filename='logs.txt')
+logging.basicConfig(level=logging.INFO, filename=sys.stdout)
 logger = logging.getLogger('Main')
 logger.setLevel(logging.DEBUG)
 

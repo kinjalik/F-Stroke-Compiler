@@ -5,10 +5,9 @@ from tokenizer import TokenList, Terminal
 import logging
 
 tokenList: TokenList
-logging.basicConfig(level=logging.DEBUG, filename='logs.txt')
+logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger('AST_Builder')
-logger.setLevel(logging.DEBUG)
 
 
 class AstNodeType(Enum):

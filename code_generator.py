@@ -1,8 +1,15 @@
 from typing import Any, List
+import logging
+import sys
 
 from AST import AST, AstNode, AstNodeType
 
-ADDRESS_LENGTH = 4
+logging.basicConfig(level=logging.DEBUG, filename=sys.stdout)
+
+logger = logging.getLogger('Code_Generator')
+logger.setLevel(logging.INFO)
+
+ADDRESS_LENGTH = 2
 assert 32 >= ADDRESS_LENGTH >= 1
 
 getInstructionCode = {
@@ -33,6 +40,7 @@ getInstructionCode = {
     'JUMPDEST': '5b',
     'PUSH': hex(0x60 + ADDRESS_LENGTH - 1)[2:],
     'DUP1': '80',
+    'DUP2': '81',
     'SWAP1': '90',
     'RETURN': 'f3'
 }
@@ -64,8 +72,6 @@ class Opcode:
         if name == 'PUSH':
             opcodes_counter += ADDRESS_LENGTH
 
-        assert len(hex(self.id)[2:]) <= ADDRESS_LENGTH
-
     def get_str(self):
         return f'{getInstructionCode[self.name]}{"" if self.name != "PUSH" else self.extra_value}'
 
@@ -78,6 +84,7 @@ class OpcodeList:
 
     def add(self, name: str, extra_value=None):
         self.list.append(Opcode(name, extra_value))
+        assert self.list[-1].id <= 255 ** ADDRESS_LENGTH
 
     def get_str(self):
         res = ''
@@ -86,77 +93,64 @@ class OpcodeList:
         return res
 
 
-class ContextFactory:
-    addrs_used: set
-
-    def __init__(self):
-        self.addrs_used = set()
-
-    def create_context(self):
-        return Context(self)
-
-    def take_address(self):
-        i = 1
-        while i in self.addrs_used:
-            i += 1
-        self.addrs_used.add(i)
-        return i
-
-    def free_address(self, number: int):
-        assert number in self.addrs_used
-        self.addrs_used.remove(number)
-
-
 class Context:
+    counter: int
     nameByNum: dict
     numByName: dict
-    factory: ContextFactory
     is_prog: bool = False
 
-    def __init__(self, factory: ContextFactory):
+    def __init__(self):
+        # ZERO reserved for prev gap
+        # ONE reserved for atom countere
+        # TWO reserved for back address
+        self.counter = 3
         self.nameByNum = {}
         self.numByName = {}
-        self.factory = factory
 
     def get_atom_addr(self, name: str):
-        if name in self.numByName:
-            return dec_to_hex(self.numByName[name] * 32)
-        number = self.factory.take_address()
-        self.nameByNum[number] = name
-        self.numByName[name] = number
-        return dec_to_hex(number * 32)
-
-    def __del__(self):
-        for name, number in self.numByName.items():
-            self.factory.free_address(number)
+        is_added = False
+        if name not in self.numByName:
+            is_added = True
+            self.numByName[name] = self.counter
+            self.nameByNum[self.counter] = name
+            self.counter += 1
+        return self.numByName[name] * 32, is_added
 
 
 def generate_code(ast: AST):
     opcodes: OpcodeList = OpcodeList()
-    context_factory = ContextFactory()
+    logger.info("Building the code...")
+    # Initialize stack memory with zero frame starting on 0x20
+    opcodes.add('PUSH', dec_to_hex(32))
+    opcodes.add('PUSH', dec_to_hex(0))
+    opcodes.add('MSTORE')
 
     # Set jump to main program body
     opcodes.add('PUSH', dec_to_hex(0))
+    jump_to_prog_start_i = len(opcodes.list) - 1
     opcodes.add('JUMP')
-
+    logger.info("Contract header generated...")
     for el in ast.root.child_nodes:
-        context = context_factory.create_context()
+        context = Context()
         if el.child_nodes[0].value == 'prog':
+            logger.info("Building prog..")
             context.is_prog = True
             opcodes.add('JUMPDEST')
-            opcodes.list[0].extra_value = dec_to_hex(opcodes.list[-1].id)
+            opcodes.list[jump_to_prog_start_i].extra_value = dec_to_hex(opcodes.list[-1].id)
             process_code_block(el.child_nodes[1], context, opcodes)
-            print('PROG DECLARED')
+            logger.info("Prog has been built.")
         else:
             assert el.child_nodes[0].value == 'func'
-            Declared.process_func_decl(el, context, opcodes)
-            print('FUNC DECLARED')
+            logger.warning("Function declaration not implemented yes")
+        del context
     print_readable_code(opcodes)
     return opcodes.get_str()
 
 
 def print_readable_code(opcodes: OpcodeList):
-    code_output = open('generated_code.ebc', 'w+')
+    filename = 'generated_code.ebc'
+    logger.info("Generating readable disassembly")
+    code_output = open(filename, 'w+')
     for opcode in opcodes.list:
         res = f"{dec_to_hex(opcode.id)}: {getInstructionCode[opcode.name]} "
         res += f"{('  ' * ADDRESS_LENGTH) if opcode.name != 'PUSH' else opcode.extra_value} "
@@ -167,6 +161,7 @@ def print_readable_code(opcodes: OpcodeList):
         code_output.write(res)
     code_output.flush()
     code_output.close()
+    logger.info(f"Readable disassembly availiable in {filename}")
 
 
 def process_code_block(prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -225,10 +220,7 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     elif name == 'and':
         return BuiltIns.aand(call_body, ctx, opcodes)
 
-    if Declared.is_func_declared(name):
-        return process_declared_call(call_body, ctx, opcodes)
-
-    print(f'No builtin or declared found for {name}')
+    print(f'No builtin found for {name}')
 
     return 0
     # print(name)
@@ -238,17 +230,7 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
 
 
 def process_declared_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
-    func_name = call_body.child_nodes[0].value
-    # Pushing back address
-    opcodes.add('PUSH', dec_to_hex(0))
-    back_address_push = len(opcodes.list) - 1
-    # Pushing arguments
-    for i in range(1, len(call_body.child_nodes)):
-        process_call(call_body.child_nodes[i], ctx, opcodes)
-    opcodes.add('PUSH', Declared.get_func_addr(func_name))
-    opcodes.add('JUMP')
-    opcodes.add('JUMPDEST')
-    opcodes.list[back_address_push].extra_value = dec_to_hex(opcodes.list[-1].id)
+    print('Func calling now under construction')
 
 
 def process_literal(call_body: AstNode, opcodes: OpcodeList):
@@ -258,8 +240,11 @@ def process_literal(call_body: AstNode, opcodes: OpcodeList):
 
 def process_atom(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     atom_name = call_body.value
-    atom_address = ctx.get_atom_addr(atom_name)
-    opcodes.add('PUSH', atom_address)
+    atom_address, is_new = ctx.get_atom_addr(atom_name)
+    opcodes.add('PUSH', dec_to_hex(atom_address))
+    opcodes.add('PUSH', dec_to_hex(0))
+    opcodes.add('MLOAD')
+    opcodes.add('ADD')
     opcodes.add('MLOAD')
 
 
@@ -310,9 +295,25 @@ class BuiltIns:
     def setq(body: AstNode, ctx: Context, opcodes: OpcodeList):
         atom_name = body.child_nodes[1].value
         process_call(body.child_nodes[2], ctx, opcodes)
-        address = ctx.get_atom_addr(atom_name)
-        opcodes.add('PUSH', address)
+        address, is_new = ctx.get_atom_addr(atom_name)
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MLOAD')
+        opcodes.add('PUSH', dec_to_hex(address))
+        opcodes.add('ADD')
         opcodes.add('MSTORE')
+        if is_new:
+            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('MLOAD')
+            opcodes.add('PUSH', dec_to_hex(32))
+            opcodes.add('ADD')
+            opcodes.add('MLOAD')
+            opcodes.add('PUSH', dec_to_hex(1))
+            opcodes.add('ADD')
+            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('MLOAD')
+            opcodes.add('PUSH', dec_to_hex(32))
+            opcodes.add('ADD')
+            opcodes.add('MSTORE')
 
     @staticmethod
     def equal(body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -364,15 +365,14 @@ class BuiltIns:
     def rreturn(body: AstNode, ctx: Context, opcodes: OpcodeList):
         process_call(body.child_nodes[1], ctx, opcodes)
         if ctx.is_prog:
-            opcodes.add('PUSH')
+            opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('MSTORE')
             opcodes.add('PUSH', dec_to_hex(32))
-            opcodes.add('PUSH')
+            opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('RETURN')
         else:
-            opcodes.add('SWAP1')
-            opcodes.add('JUMP')
-
+            # ToDo Fix when rewriting functions
+            pass
 
     while_count = 0
     current_while = None
@@ -432,9 +432,10 @@ class BuiltIns:
     Stack: | B | A | EOS |
     B < A
     '''
+
     @staticmethod
     def greater(body: AstNode, ctx: Context, opcodes: OpcodeList):
-        for i in range(1,3):
+        for i in range(1, 3):
             process_call(body.child_nodes[i], ctx, opcodes)
         opcodes.add('LT')
 
@@ -448,7 +449,7 @@ class BuiltIns:
 
     @staticmethod
     def oor(body: AstNode, ctx: Context, opcodes: OpcodeList):
-        for i in range(1,3):
+        for i in range(1, 3):
             process_call(body.child_nodes[i], ctx, opcodes)
         opcodes.add('OR')
 
@@ -457,50 +458,3 @@ class BuiltIns:
         for i in range(1, 3):
             process_call(body.child_nodes[i], ctx, opcodes)
         opcodes.add('AND')
-
-'''
-How to use function declarations:
-1. Place back address on the stack:
-    - Eg.;
-        77: PUSH     / arguments /
-        78: JUMP     / to the function start /
-        79: JUMPDEST / back address /
-    - 79 is an address you are looking for
-2. Place all arguments on the stack
-    - Last argument must be on the top of stack
-    - Eg.: ( modulo ( 
-               ( plus 2 3 ) 
-               2
-             ) 
-           ) 
-    - Firstly, calculate ( plus 2 3 ) and place result onto the stack: | 2 + 3 = 5 | EOS |
-    - Then, place 2: | 2 | 5 | EOS | 
-'''
-
-
-class Declared:
-    addrByName: dict = {}
-
-    @staticmethod
-    def process_func_decl(body: AstNode, ctx: Context, opcodes: OpcodeList):
-        name = body.child_nodes[1].value
-        opcodes.add('JUMPDEST')
-        Declared.addrByName[name] = dec_to_hex(opcodes.list[-1].id)
-        arguments = body.child_nodes[2].child_nodes
-        # Allocating memory for arguments, adding them to the context
-        for atom in reversed(arguments):
-            address = ctx.get_atom_addr(atom.value)
-            opcodes.add('PUSH', address)
-            opcodes.add('MSTORE')
-        process_call(body.child_nodes[3], ctx, opcodes)
-        opcodes.add('SWAP1')
-        opcodes.add('JUMP')
-
-    @staticmethod
-    def is_func_declared(name: str):
-        return name in Declared.addrByName
-
-    @staticmethod
-    def get_func_addr(name: str):
-        assert Declared.is_func_declared(name)
-        return Declared.addrByName[name]
