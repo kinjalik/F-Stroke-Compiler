@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.DEBUG, filename=sys.stdout)
 logger = logging.getLogger('Code_Generator')
 logger.setLevel(logging.INFO)
 
-ADDRESS_LENGTH = 2
+ADDRESS_LENGTH = 3
 assert 32 >= ADDRESS_LENGTH >= 1
 
 getInstructionCode = {
@@ -121,7 +121,7 @@ def generate_code(ast: AST):
     opcodes: OpcodeList = OpcodeList()
     logger.info("Building the code...")
     # Initialize stack memory with zero frame starting on 0x20
-    opcodes.add('PUSH', dec_to_hex(32))
+    opcodes.add('PUSH', dec_to_hex(64))
     opcodes.add('PUSH', dec_to_hex(0))
     opcodes.add('MSTORE')
 
@@ -316,15 +316,12 @@ class BuiltIns:
         if is_new:
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('MLOAD')
-            opcodes.add('PUSH', dec_to_hex(0x20))
-            opcodes.add('ADD')
+            opcodes.add('PUSH', dec_to_hex(32 * 1))
+            opcodes.add('DUP1')  # | atm cntr addr | atm cntr add r |
             opcodes.add('MLOAD')
             opcodes.add('PUSH', dec_to_hex(1))
             opcodes.add('ADD')
-            opcodes.add('PUSH', dec_to_hex(0))
-            opcodes.add('MLOAD')
-            opcodes.add('PUSH', dec_to_hex(0x20))
-            opcodes.add('ADD')
+            opcodes.add('SWAP1')
             opcodes.add('MSTORE')
 
 
@@ -389,17 +386,16 @@ class BuiltIns:
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('RETURN')
         else:
+            # load back addr
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('MLOAD')
-            opcodes.add('PUSH', dec_to_hex(0x40))
+            opcodes.add('PUSH', dec_to_hex(0x20 * 2))
             opcodes.add('ADD')
             opcodes.add('MLOAD')
 
-            # set prev gap back
-            opcodes.add('PUSH', dec_to_hex(0x40))
+            # set cur gap as prev
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('MLOAD')
-            opcodes.add('ADD')
             opcodes.add('MLOAD')
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('MSTORE')
@@ -504,34 +500,48 @@ class Declared:
         opcodes.add('JUMPDEST')
         Declared.function_addresses[call_body.child_nodes[1].value] = opcodes.list[-1].id
 
-        # calc cur gap
-        opcodes.add('PUSH', dec_to_hex(0x60))
+        # save prev gap to TEMP REGISTRY (0x20)
         opcodes.add('PUSH', dec_to_hex(0))
         opcodes.add('MLOAD')
+        opcodes.add('PUSH', dec_to_hex(32))
+        opcodes.add('MSTORE')
+
+        # Calc cur gap
+        # prev gap
+        opcodes.add('PUSH', dec_to_hex(32))
+        opcodes.add('MLOAD')
+        # atoms cnt
+        opcodes.add('DUP1')
         opcodes.add('PUSH', dec_to_hex(0x20))
         opcodes.add('ADD')
         opcodes.add('MLOAD')
+        opcodes.add('PUSH', dec_to_hex(0x20))
+        opcodes.add('MUL')
+        # prev gap + atms cnt
         opcodes.add('ADD')
+        # Service fields
+        opcodes.add('PUSH', dec_to_hex(32 * 3))
+        opcodes.add('ADD')
+
+        # save cur gap
         opcodes.add('PUSH', dec_to_hex(0))
-        opcodes.add('MLOAD')
-        opcodes.add('ADD')
+        opcodes.add('MSTORE')
 
         # load prev gap
-        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('PUSH', dec_to_hex(32))
         opcodes.add('MLOAD')
-        opcodes.add('SWAP1')
-        opcodes.add('PUSH', dec_to_hex(0))
-        opcodes.add('MSTORE')
+        # save prev gap
         opcodes.add('PUSH', dec_to_hex(0))
         opcodes.add('MLOAD')
         opcodes.add('MSTORE')
 
-        # load back address
+        # save back addr
         opcodes.add('PUSH', dec_to_hex(0))
         opcodes.add('MLOAD')
         opcodes.add('PUSH', dec_to_hex(0x40))
         opcodes.add('ADD')
         opcodes.add('MSTORE')
+
 
         # Load variables
         for arg in reversed(call_body.child_nodes[2].child_nodes):
@@ -553,10 +563,8 @@ class Declared:
         opcodes.add('MLOAD')
 
         # set prev gap back
-        opcodes.add('PUSH', dec_to_hex(0x40))
         opcodes.add('PUSH', dec_to_hex(0))
         opcodes.add('MLOAD')
-        opcodes.add('ADD')
         opcodes.add('MLOAD')
         opcodes.add('PUSH', dec_to_hex(0))
         opcodes.add('MSTORE')
