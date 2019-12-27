@@ -141,7 +141,7 @@ def generate_code(ast: AST):
             logger.info("Prog has been built.")
         else:
             assert el.child_nodes[0].value == 'func'
-            logger.warning("Function declaration not implemented yes")
+            Declared.declare_dunction(el, context, opcodes)
         del context
     print_readable_code(opcodes)
     return opcodes.get_str()
@@ -220,7 +220,10 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     elif name == 'and':
         return BuiltIns.aand(call_body, ctx, opcodes)
 
-    print(f'No builtin found for {name}')
+    if name in Declared.function_addresses:
+        return process_declared_call(call_body, ctx, opcodes)
+
+    print(f'No builtin or decl found for {name}')
 
     return 0
     # print(name)
@@ -230,7 +233,16 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
 
 
 def process_declared_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
-    print('Func calling now under construction')
+    for i in range(1, len(call_body.child_nodes)):
+        process_call(call_body.child_nodes[i], ctx, opcodes)
+
+    opcodes.add('PUSH')
+    back_address = len(opcodes.list) - 1
+
+    opcodes.add('PUSH', dec_to_hex(Declared.function_addresses[call_body.child_nodes[0].value]))
+    opcodes.add('JUMP')
+    opcodes.add('JUMPDEST')
+    opcodes.list[back_address].extra_value = dec_to_hex(opcodes.list[-1].id)
 
 
 def process_literal(call_body: AstNode, opcodes: OpcodeList):
@@ -304,16 +316,17 @@ class BuiltIns:
         if is_new:
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('MLOAD')
-            opcodes.add('PUSH', dec_to_hex(32))
+            opcodes.add('PUSH', dec_to_hex(0x20))
             opcodes.add('ADD')
             opcodes.add('MLOAD')
             opcodes.add('PUSH', dec_to_hex(1))
             opcodes.add('ADD')
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('MLOAD')
-            opcodes.add('PUSH', dec_to_hex(32))
+            opcodes.add('PUSH', dec_to_hex(0x20))
             opcodes.add('ADD')
             opcodes.add('MSTORE')
+
 
     @staticmethod
     def equal(body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -364,6 +377,11 @@ class BuiltIns:
     @staticmethod
     def rreturn(body: AstNode, ctx: Context, opcodes: OpcodeList):
         process_call(body.child_nodes[1], ctx, opcodes)
+
+        # opcodes.add('PUSH', dec_to_hex(32))
+        # opcodes.add('PUSH', dec_to_hex(32 * 2))
+        # opcodes.add('RETURN')
+
         if ctx.is_prog:
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('MSTORE')
@@ -371,8 +389,22 @@ class BuiltIns:
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('RETURN')
         else:
-            # ToDo Fix when rewriting functions
-            pass
+            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('MLOAD')
+            opcodes.add('PUSH', dec_to_hex(0x40))
+            opcodes.add('ADD')
+            opcodes.add('MLOAD')
+
+            # set prev gap back
+            opcodes.add('PUSH', dec_to_hex(0x40))
+            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('MLOAD')
+            opcodes.add('ADD')
+            opcodes.add('MLOAD')
+            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('MSTORE')
+
+            opcodes.add('JUMP')
 
     while_count = 0
     current_while = None
@@ -458,3 +490,75 @@ class BuiltIns:
         for i in range(1, 3):
             process_call(body.child_nodes[i], ctx, opcodes)
         opcodes.add('AND')
+
+
+class Declared:
+    function_addresses = {}
+
+    @staticmethod
+    def get_func_addr(name: str):
+        return Declared.function_addresses[name]
+
+    @staticmethod
+    def declare_dunction(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+        opcodes.add('JUMPDEST')
+        Declared.function_addresses[call_body.child_nodes[1].value] = opcodes.list[-1].id
+
+        # calc cur gap
+        opcodes.add('PUSH', dec_to_hex(0x60))
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MLOAD')
+        opcodes.add('PUSH', dec_to_hex(0x20))
+        opcodes.add('ADD')
+        opcodes.add('MLOAD')
+        opcodes.add('ADD')
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MLOAD')
+        opcodes.add('ADD')
+
+        # load prev gap
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MLOAD')
+        opcodes.add('SWAP1')
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MSTORE')
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MLOAD')
+        opcodes.add('MSTORE')
+
+        # load back address
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MLOAD')
+        opcodes.add('PUSH', dec_to_hex(0x40))
+        opcodes.add('ADD')
+        opcodes.add('MSTORE')
+
+        # Load variables
+        for arg in reversed(call_body.child_nodes[2].child_nodes):
+            assert arg.type == AstNodeType.Atom
+            address, is_new = ctx.get_atom_addr(arg.value)
+            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('MLOAD')
+            opcodes.add('PUSH', dec_to_hex(address))
+            opcodes.add('ADD')
+            opcodes.add('MSTORE')
+
+        process_call(call_body.child_nodes[3], ctx, opcodes)
+
+        # load back address
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MLOAD')
+        opcodes.add('PUSH', dec_to_hex(0x40))
+        opcodes.add('ADD')
+        opcodes.add('MLOAD')
+
+        # set prev gap back
+        opcodes.add('PUSH', dec_to_hex(0x40))
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MLOAD')
+        opcodes.add('ADD')
+        opcodes.add('MLOAD')
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('MSTORE')
+
+        opcodes.add('JUMP')
