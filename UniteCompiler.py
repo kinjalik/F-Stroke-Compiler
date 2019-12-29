@@ -1,18 +1,241 @@
-from typing import Any, List
-import logging
+import json
 import sys
-
-from AST import AST, AstNode, AstNodeType
-
-logging.basicConfig(level=logging.DEBUG, filename=sys.stdout)
-
-generator_logger = logging.getLogger('Code_Generator')
-generator_logger.setLevel(logging.INFO)
+from enum import Enum
+from typing import Generic, List, Any
+import logging
 
 ADDRESS_LENGTH = 2
 FRAME_SERVICE_ATOMS = 3
 assert 32 >= ADDRESS_LENGTH >= 1
 assert FRAME_SERVICE_ATOMS >= 2
+
+
+class Terminal(Enum):
+    UNKNOWN = -1
+    EOF = 1
+    SPACE = 2
+    LP = 3
+    RP = 4
+    Letter = 5
+    Digit = 6
+
+
+class Token:
+    type: Terminal
+    value: str
+
+    def __init__(self, char: str):
+        self.value = char
+        if char == ' ':
+            self.type = Terminal.SPACE
+        elif char == '(':
+            self.type = Terminal.LP
+        elif char == ')':
+            self.type = Terminal.RP
+        elif char in '1234567890':
+            self.type = Terminal.Digit
+        elif char in 'qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM':
+            self.type = Terminal.Letter
+        elif char == chr(0):
+            self.type = Terminal.EOF
+        else:
+            self.type = Terminal.UNKNOWN
+
+    def __str__(self):
+        return f'Token {self.type.name}: {self.value}'
+
+    @staticmethod
+    def get_eof():
+        return Token(chr(0))
+
+
+class TokenList:
+    tokens: List[Token]
+    length: int
+    currentTokenIndex: int
+
+    def __init__(self, rawCode: str):
+        self.tokens = [Token(x) for x in preprocess_code(rawCode)]
+        self.tokens.append(Token.get_eof())
+        self.length = len(self.tokens)
+        self.currentTokenIndex = 0
+
+    def __len__(self):
+        return self.length
+
+    def set_current_token_index(self, val: int) -> None:
+        self.currentTokenIndex = val
+
+    def get_current_token_index(self) -> int:
+        return self.currentTokenIndex
+
+    def get_current_token(self) -> Token:
+        return self.tokens[self.currentTokenIndex]
+
+    def get_next_token(self) -> Token:
+        try:
+            return self.tokens[self.currentTokenIndex + 1]
+        except Exception as e:
+            print(e)
+
+    def inc(self):
+        self.currentTokenIndex += 1
+
+
+def preprocess_code(formatted_code: str):
+    formatted_code = formatted_code.replace('\n', ' ')
+    formatted_code = formatted_code.replace('\t', ' ')
+    while '  ' in formatted_code:
+        formatted_code = formatted_code.replace('  ', ' ')
+    return formatted_code
+
+
+def get_tokens_array(rawCode: str):
+    return [Token(x) for x in preprocess_code(rawCode)]
+
+
+tokenList: TokenList
+
+class AstNodeType(Enum):
+    Program = 0
+    List = 1
+    Element = 2
+    Atom = 3
+    Literal = 4
+    Identifier = 5
+    Integer = 6
+
+
+class AstNode:
+    type: AstNodeType
+    value: Any
+    child_nodes: List = list()
+
+    def __init__(self, type: AstNodeType, value: Any):
+        self.type = type
+        self.value = value
+        self.child_nodes = list()
+
+    def add_child(self, child_node):
+        self.child_nodes.append(child_node)
+
+    def to_dict(self):
+        res = {
+            'type': self.type.name,
+        }
+
+        child_nodes = []
+        if len(self.child_nodes) != 0:
+            for x in self.child_nodes:
+                child_nodes.append(x.to_dict())
+            res['child_nodes'] = child_nodes
+        if self.value is not None:
+            res['value'] = self.value
+        return res
+
+    @staticmethod
+    def process_program():
+        global tokenList
+        node = AstNode(AstNodeType.Program, None)
+        token = tokenList.get_current_token()
+        while token.type != Terminal.EOF:
+            if token.type == Terminal.SPACE:
+                tokenList.inc()
+            node.add_child(AstNode.process_element())
+            token = tokenList.get_current_token()
+        return node
+
+    @staticmethod
+    def process_element():
+        global tokenList
+        node = AstNode(AstNodeType.Element, None)
+        token = tokenList.get_current_token()
+        if token.type == Terminal.Letter:
+            return AstNode.process_atom()
+        elif token.type == Terminal.Digit:
+            return AstNode.process_literal()
+        elif token.type == Terminal.LP:
+            return AstNode.process_list()
+        return node
+
+    @staticmethod
+    def process_list():
+        global tokenList
+        node = AstNode(AstNodeType.List, None)
+
+        token = tokenList.get_current_token()
+        assert token.type == Terminal.LP
+        tokenList.inc()
+        token = tokenList.get_current_token()
+        while token.type == Terminal.SPACE and tokenList.get_next_token().type != Terminal.RP:
+            tokenList.inc()
+            node.add_child(AstNode.process_element())
+            token = tokenList.get_current_token()
+        assert token.type == Terminal.SPACE and tokenList.get_next_token().type == Terminal.RP
+        tokenList.inc()
+        tokenList.inc()
+        return node
+
+    # @staticmethod
+    # def process_atom():
+    #     global tokenList
+    #     logger.debug('Building node: Atom')
+    #     node = AstNode(Type.Atom, None)
+    #     node.add_child(AstNode.process_identifier())
+    #     return node
+
+    @staticmethod
+    def process_atom():
+        global tokenList
+        node = AstNode(AstNodeType.Atom, None)
+
+        token = tokenList.get_current_token()
+        assert token.type == Terminal.Letter
+        value = token.value
+
+        tokenList.inc()
+        token = tokenList.get_current_token()
+        while token.type == Terminal.Letter or token.type == Terminal.Digit:
+            value += token.value
+            tokenList.inc()
+            token = tokenList.get_current_token()
+
+        node.value = value
+        return node
+
+    @staticmethod
+    def process_literal():
+        global tokenList
+        node = AstNode(AstNodeType.Literal, None)
+
+        token = tokenList.get_current_token()
+        assert token.type == Terminal.Digit
+        value = token.value
+
+        tokenList.inc()
+        token = tokenList.get_current_token()
+        while token.type == Terminal.Digit:
+            value += token.value
+            tokenList.inc()
+            token = tokenList.get_current_token()
+
+        node.value = int(value)
+        return node
+
+
+class AST:
+    root: AstNode
+
+    def __init__(self, token_list: TokenList):
+        global tokenList
+        tokenList = token_list
+        tokenList.set_current_token_index(0)
+        self.root = AstNode.process_program()
+
+    def to_dict(self):
+        return {
+            'root': self.root.to_dict()
+        }
 
 getInstructionCode = {
     'STOP': '00',
@@ -121,24 +344,16 @@ class Context:
 
 def generate_code(ast: AST):
     opcodes: OpcodeList = OpcodeList()
-
-    generator_logger.info("Building the code...")
-
     VirtualStackHelper.init_stack(opcodes)
 
     # Set jump to main program body
     opcodes.add('PUSH', dec_to_hex(0))
     jump_to_prog_start_i = len(opcodes.list) - 1
     opcodes.add('JUMP')
-
-    generator_logger.info("Contract header generated...")
-
     for el in ast.root.child_nodes:
         context = Context()
 
         if el.child_nodes[0].value == 'prog':
-            generator_logger.info("Building prog..")
-
             context.is_prog = True
             # Jump from header to prog body
             opcodes.add('JUMPDEST')
@@ -152,32 +367,11 @@ def generate_code(ast: AST):
             process_code_block(el.child_nodes[1], context, opcodes)
 
             opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS)
-
-            generator_logger.info("Prog has been built.")
         else:
             assert el.child_nodes[0].value == 'func'
-            generator_logger.info(f'Building func {el.child_nodes[1].value}')
             Declared.declare(el, context, opcodes)
 
-    print_readable_code(opcodes)
     return opcodes.get_str()
-
-
-def print_readable_code(opcodes: OpcodeList):
-    filename = 'generated_code.ebc'
-    generator_logger.info("Generating readable disassemble")
-    code_output = open(filename, 'w+')
-    for opcode in opcodes.list:
-        res = f"{dec_to_hex(opcode.id)}: {getInstructionCode[opcode.name]} "
-        res += f"{('  ' * ADDRESS_LENGTH) if opcode.name != 'PUSH' else opcode.extra_value} "
-        res += f"{opcode.name}"
-        if opcode.name == 'PUSH':
-            res += f" 0x{opcode.extra_value}"
-        res += '\n'
-        code_output.write(res)
-    code_output.flush()
-    code_output.close()
-    generator_logger.info(f"Readable disassemble available in {filename}")
 
 
 def process_code_block(prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -240,8 +434,6 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
 
     if name in Declared.addr_by_name:
         return Declared.call(call_body, ctx, opcodes)
-
-    print(f'No builtin found for {name}')
 
     return 0
     # print(name)
@@ -570,7 +762,6 @@ class BuiltIns:
         """
         opcodes.add('LT')
 
-
     @staticmethod
     def greatereq(body: AstNode, ctx: Context, opcodes: OpcodeList):
         """
@@ -798,3 +989,12 @@ class VirtualStackHelper:
         """
         VirtualStackHelper.load_prev_gap(opcodes)
         VirtualStackHelper.store_new_gap(opcodes)
+
+
+# add filemode="w" to overwrite
+if __name__ == '__main__':
+    # code = sys.stdin.read()
+    code = open('input.fst').read()
+    tokens = TokenList(code)
+    tree = AST(tokens)
+    print(generate_code(tree))

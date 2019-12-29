@@ -7,7 +7,7 @@ import logging
 tokenList: TokenList
 logging.basicConfig(level=logging.INFO)
 
-logger = logging.getLogger('AST_Builder')
+ast_logger = logging.getLogger('AST_Builder')
 
 
 class AstNodeType(Enum):
@@ -50,7 +50,7 @@ class AstNode:
     @staticmethod
     def process_program():
         global tokenList
-        logger.debug('Building node: Program')
+        ast_logger.debug('Building node: Program')
         node = AstNode(AstNodeType.Program, None)
         token = tokenList.get_current_token()
         while token.type != Terminal.EOF:
@@ -63,7 +63,7 @@ class AstNode:
     @staticmethod
     def process_element():
         global tokenList
-        logger.debug('Building node: Element')
+        ast_logger.debug('Building node: Element')
         node = AstNode(AstNodeType.Element, None)
         token = tokenList.get_current_token()
         if token.type == Terminal.Letter:
@@ -77,7 +77,7 @@ class AstNode:
     @staticmethod
     def process_list():
         global tokenList
-        logger.debug('Building node: List')
+        ast_logger.debug('Building node: List')
         node = AstNode(AstNodeType.List, None)
 
         token = tokenList.get_current_token()
@@ -104,7 +104,7 @@ class AstNode:
     @staticmethod
     def process_atom():
         global tokenList
-        logger.debug('Building node: Atom')
+        ast_logger.debug('Building node: Atom')
         node = AstNode(AstNodeType.Atom, None)
 
         token = tokenList.get_current_token()
@@ -124,7 +124,7 @@ class AstNode:
     @staticmethod
     def process_literal():
         global tokenList
-        logger.debug('Building node: Literal')
+        ast_logger.debug('Building node: Literal')
         node = AstNode(AstNodeType.Literal, None)
 
         token = tokenList.get_current_token()
@@ -146,7 +146,7 @@ class AST:
     root: AstNode
 
     def __init__(self, token_list: TokenList):
-        logger.info('Starting build of AST')
+        ast_logger.info('Starting build of AST')
         global tokenList
         tokenList = token_list
         tokenList.set_current_token_index(0)
