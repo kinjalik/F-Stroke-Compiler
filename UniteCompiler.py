@@ -1,13 +1,8 @@
-import json
 import sys
 from enum import Enum
+from typing import List
+from enum import Enum
 from typing import Generic, List, Any
-import logging
-
-ADDRESS_LENGTH = 2
-FRAME_SERVICE_ATOMS = 3
-assert 32 >= ADDRESS_LENGTH >= 1
-assert FRAME_SERVICE_ATOMS >= 2
 
 
 class Terminal(Enum):
@@ -87,14 +82,18 @@ def preprocess_code(formatted_code: str):
     formatted_code = formatted_code.replace('\t', ' ')
     while '  ' in formatted_code:
         formatted_code = formatted_code.replace('  ', ' ')
+    while formatted_code[-1] == ' ':
+        formatted_code = formatted_code[:-1]
+
+
     return formatted_code
 
 
 def get_tokens_array(rawCode: str):
     return [Token(x) for x in preprocess_code(rawCode)]
 
-
 tokenList: TokenList
+
 
 class AstNodeType(Enum):
     Program = 0
@@ -137,24 +136,21 @@ class AstNode:
     def process_program():
         global tokenList
         node = AstNode(AstNodeType.Program, None)
-        token = tokenList.get_current_token()
-        while token.type != Terminal.EOF:
-            if token.type == Terminal.SPACE:
+        while tokenList.get_current_token().type != Terminal.EOF:
+            while tokenList.get_current_token().type == Terminal.SPACE:
                 tokenList.inc()
             node.add_child(AstNode.process_element())
-            token = tokenList.get_current_token()
         return node
 
     @staticmethod
     def process_element():
         global tokenList
         node = AstNode(AstNodeType.Element, None)
-        token = tokenList.get_current_token()
-        if token.type == Terminal.Letter:
+        if tokenList.get_current_token().type == Terminal.Letter:
             return AstNode.process_atom()
-        elif token.type == Terminal.Digit:
+        elif tokenList.get_current_token().type == Terminal.Digit:
             return AstNode.process_literal()
-        elif token.type == Terminal.LP:
+        elif tokenList.get_current_token().type == Terminal.LP:
             return AstNode.process_list()
         return node
 
@@ -163,17 +159,18 @@ class AstNode:
         global tokenList
         node = AstNode(AstNodeType.List, None)
 
-        token = tokenList.get_current_token()
-        assert token.type == Terminal.LP
+        assert tokenList.get_current_token().type == Terminal.LP
         tokenList.inc()
-        token = tokenList.get_current_token()
-        while token.type == Terminal.SPACE and tokenList.get_next_token().type != Terminal.RP:
-            tokenList.inc()
+        while tokenList.get_current_token().type != Terminal.RP:
+            if tokenList.get_current_token().type == Terminal.RP:
+                break
+            if tokenList.get_current_token().type == Terminal.SPACE:
+                tokenList.inc()
+                continue
             node.add_child(AstNode.process_element())
-            token = tokenList.get_current_token()
-        assert token.type == Terminal.SPACE and tokenList.get_next_token().type == Terminal.RP
+        assert tokenList.get_current_token().type == Terminal.RP
         tokenList.inc()
-        tokenList.inc()
+
         return node
 
     # @staticmethod
@@ -189,16 +186,14 @@ class AstNode:
         global tokenList
         node = AstNode(AstNodeType.Atom, None)
 
-        token = tokenList.get_current_token()
-        assert token.type == Terminal.Letter
-        value = token.value
+        assert tokenList.get_current_token().type == Terminal.Letter
+
+        value = tokenList.get_current_token().value
 
         tokenList.inc()
-        token = tokenList.get_current_token()
-        while token.type == Terminal.Letter or token.type == Terminal.Digit:
-            value += token.value
+        while tokenList.get_current_token().type == Terminal.Letter or tokenList.get_current_token().type == Terminal.Digit:
+            value += tokenList.get_current_token().value
             tokenList.inc()
-            token = tokenList.get_current_token()
 
         node.value = value
         return node
@@ -208,16 +203,13 @@ class AstNode:
         global tokenList
         node = AstNode(AstNodeType.Literal, None)
 
-        token = tokenList.get_current_token()
-        assert token.type == Terminal.Digit
-        value = token.value
+        assert tokenList.get_current_token().type == Terminal.Digit
+        value = tokenList.get_current_token().value
 
         tokenList.inc()
-        token = tokenList.get_current_token()
-        while token.type == Terminal.Digit:
-            value += token.value
+        while tokenList.get_current_token().type == Terminal.Digit:
+            value += tokenList.get_current_token().value
             tokenList.inc()
-            token = tokenList.get_current_token()
 
         node.value = int(value)
         return node
@@ -236,6 +228,11 @@ class AST:
         return {
             'root': self.root.to_dict()
         }
+
+ADDRESS_LENGTH = 32
+FRAME_SERVICE_ATOMS = 3
+assert 32 >= ADDRESS_LENGTH >= 1
+assert FRAME_SERVICE_ATOMS >= 2
 
 getInstructionCode = {
     'STOP': '00',
@@ -344,16 +341,21 @@ class Context:
 
 def generate_code(ast: AST):
     opcodes: OpcodeList = OpcodeList()
+
+
     VirtualStackHelper.init_stack(opcodes)
 
     # Set jump to main program body
     opcodes.add('PUSH', dec_to_hex(0))
     jump_to_prog_start_i = len(opcodes.list) - 1
     opcodes.add('JUMP')
+
+
     for el in ast.root.child_nodes:
         context = Context()
 
         if el.child_nodes[0].value == 'prog':
+
             context.is_prog = True
             # Jump from header to prog body
             opcodes.add('JUMPDEST')
@@ -367,11 +369,28 @@ def generate_code(ast: AST):
             process_code_block(el.child_nodes[1], context, opcodes)
 
             opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS)
+
         else:
             assert el.child_nodes[0].value == 'func'
             Declared.declare(el, context, opcodes)
 
+    print_readable_code(opcodes)
     return opcodes.get_str()
+
+
+def print_readable_code(opcodes: OpcodeList):
+    filename = 'generated_code.ebc'
+    code_output = open(filename, 'w+')
+    for opcode in opcodes.list:
+        res = f"{dec_to_hex(opcode.id)}: {getInstructionCode[opcode.name]} "
+        res += f"{('  ' * ADDRESS_LENGTH) if opcode.name != 'PUSH' else opcode.extra_value} "
+        res += f"{opcode.name}"
+        if opcode.name == 'PUSH':
+            res += f" 0x{opcode.extra_value}"
+        res += '\n'
+        code_output.write(res)
+    code_output.flush()
+    code_output.close()
 
 
 def process_code_block(prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -434,6 +453,8 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
 
     if name in Declared.addr_by_name:
         return Declared.call(call_body, ctx, opcodes)
+
+    print(f'No builtin found for {name}')
 
     return 0
     # print(name)
@@ -762,6 +783,7 @@ class BuiltIns:
         """
         opcodes.add('LT')
 
+
     @staticmethod
     def greatereq(body: AstNode, ctx: Context, opcodes: OpcodeList):
         """
@@ -991,10 +1013,9 @@ class VirtualStackHelper:
         VirtualStackHelper.store_new_gap(opcodes)
 
 
-# add filemode="w" to overwrite
 if __name__ == '__main__':
-    # code = sys.stdin.read()
     code = open('input.fst').read()
+    # code = sys.stdin.read()
     tokens = TokenList(code)
     tree = AST(tokens)
     print(generate_code(tree))

@@ -79,15 +79,12 @@ def preprocess_code(formatted_code: str):
     formatted_code = formatted_code.replace('\t', ' ')
     while '  ' in formatted_code:
         formatted_code = formatted_code.replace('  ', ' ')
+    while formatted_code[-1] == ' ':
+        formatted_code = formatted_code[:-1]
+
+
     return formatted_code
 
 
 def get_tokens_array(rawCode: str):
     return [Token(x) for x in preprocess_code(rawCode)]
-
-
-if __name__ == '__main__':
-    inputFile = open('input.fst', 'r')
-    code = inputFile.read()
-    code = preprocess_code(code)
-    print([str(Token(x)) for x in code])

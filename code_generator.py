@@ -1,15 +1,10 @@
 from typing import Any, List
-import logging
 import sys
 
 from AST import AST, AstNode, AstNodeType
 
-logging.basicConfig(level=logging.DEBUG, filename=sys.stdout)
 
-generator_logger = logging.getLogger('Code_Generator')
-generator_logger.setLevel(logging.INFO)
-
-ADDRESS_LENGTH = 2
+ADDRESS_LENGTH = 32
 FRAME_SERVICE_ATOMS = 3
 assert 32 >= ADDRESS_LENGTH >= 1
 assert FRAME_SERVICE_ATOMS >= 2
@@ -122,7 +117,6 @@ class Context:
 def generate_code(ast: AST):
     opcodes: OpcodeList = OpcodeList()
 
-    generator_logger.info("Building the code...")
 
     VirtualStackHelper.init_stack(opcodes)
 
@@ -131,13 +125,11 @@ def generate_code(ast: AST):
     jump_to_prog_start_i = len(opcodes.list) - 1
     opcodes.add('JUMP')
 
-    generator_logger.info("Contract header generated...")
 
     for el in ast.root.child_nodes:
         context = Context()
 
         if el.child_nodes[0].value == 'prog':
-            generator_logger.info("Building prog..")
 
             context.is_prog = True
             # Jump from header to prog body
@@ -153,10 +145,8 @@ def generate_code(ast: AST):
 
             opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS)
 
-            generator_logger.info("Prog has been built.")
         else:
             assert el.child_nodes[0].value == 'func'
-            generator_logger.info(f'Building func {el.child_nodes[1].value}')
             Declared.declare(el, context, opcodes)
 
     print_readable_code(opcodes)
@@ -165,7 +155,6 @@ def generate_code(ast: AST):
 
 def print_readable_code(opcodes: OpcodeList):
     filename = 'generated_code.ebc'
-    generator_logger.info("Generating readable disassemble")
     code_output = open(filename, 'w+')
     for opcode in opcodes.list:
         res = f"{dec_to_hex(opcode.id)}: {getInstructionCode[opcode.name]} "
@@ -177,7 +166,6 @@ def print_readable_code(opcodes: OpcodeList):
         code_output.write(res)
     code_output.flush()
     code_output.close()
-    generator_logger.info(f"Readable disassemble available in {filename}")
 
 
 def process_code_block(prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
