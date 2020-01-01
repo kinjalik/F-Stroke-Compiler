@@ -33,9 +33,6 @@ class Token:
         else:
             self.type = Terminal.UNKNOWN
 
-    def __str__(self):
-        return f'Token {self.type.name}: {self.value}'
-
     @staticmethod
     def get_eof():
         return Token(chr(0))
@@ -65,10 +62,7 @@ class TokenList:
         return self.tokens[self.currentTokenIndex]
 
     def get_next_token(self) -> Token:
-        try:
-            return self.tokens[self.currentTokenIndex + 1]
-        except Exception as e:
-            print(e)
+        return self.tokens[self.currentTokenIndex + 1]
 
     def inc(self):
         self.currentTokenIndex += 1
@@ -81,7 +75,6 @@ def preprocess_code(formatted_code: str):
         formatted_code = formatted_code.replace('  ', ' ')
     while formatted_code[-1] == ' ':
         formatted_code = formatted_code[:-1]
-
 
     return formatted_code
 

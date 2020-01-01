@@ -1,7 +1,6 @@
-import sys
-import time
 from enum import Enum
-from typing import Generic, List, Any
+from typing import Any, List
+
 from tokenizer import TokenList, Terminal
 
 tokenList: TokenList
@@ -30,59 +29,38 @@ class AstNode:
     def add_child(self, child_node):
         self.child_nodes.append(child_node)
 
-    def to_dict(self):
-        res = {
-            'type': self.type.name,
-        }
-
-        child_nodes = []
-        if len(self.child_nodes) != 0:
-            for x in self.child_nodes:
-                child_nodes.append(x.to_dict())
-            res['child_nodes'] = child_nodes
-        if self.value is not None:
-            res['value'] = self.value
-        return res
-
     @staticmethod
     def process_program():
         global tokenList
         node = AstNode(AstNodeType.Program, None)
-        token = tokenList.get_current_token()
-        while token.type != Terminal.EOF:
-            while tokenList.get_current_token().type == Terminal.SPACE:
+        while tokenList.get_current_token().type != Terminal.EOF:
+            if tokenList.get_current_token().type == Terminal.SPACE:
                 tokenList.inc()
+                continue
             node.add_child(AstNode.process_element())
-            token = tokenList.get_current_token()
         return node
 
     @staticmethod
     def process_element():
         global tokenList
-        node = AstNode(AstNodeType.Element, None)
         if tokenList.get_current_token().type == Terminal.Letter:
             return AstNode.process_atom()
         elif tokenList.get_current_token().type == Terminal.Digit:
             return AstNode.process_literal()
         elif tokenList.get_current_token().type == Terminal.LP:
             return AstNode.process_list()
-        return node
 
     @staticmethod
     def process_list():
         global tokenList
         node = AstNode(AstNodeType.List, None)
 
-        assert tokenList.get_current_token().type == Terminal.LP
         tokenList.inc()
         while tokenList.get_current_token().type != Terminal.RP:
-            if tokenList.get_current_token().type == Terminal.RP:
-                break
             if tokenList.get_current_token().type == Terminal.SPACE:
                 tokenList.inc()
                 continue
             node.add_child(AstNode.process_element())
-        assert tokenList.get_current_token().type == Terminal.RP
         tokenList.inc()
 
         return node
@@ -100,24 +78,21 @@ class AstNode:
         global tokenList
         node = AstNode(AstNodeType.Atom, None)
 
-        assert tokenList.get_current_token().type == Terminal.Letter
-
-        value = tokenList.get_current_token().value
+        value: str = tokenList.get_current_token().value
 
         tokenList.inc()
-        while tokenList.get_current_token().type == Terminal.Letter or tokenList.get_current_token().type == Terminal.Digit:
+        while tokenList.get_current_token().type == Terminal.Letter or \
+                tokenList.get_current_token().type == Terminal.Digit:
             value += tokenList.get_current_token().value
             tokenList.inc()
 
-        node.value = value
+        node.value = value.lower()
         return node
 
     @staticmethod
     def process_literal():
         global tokenList
         node = AstNode(AstNodeType.Literal, None)
-
-        assert tokenList.get_current_token().type == Terminal.Digit
         value = tokenList.get_current_token().value
 
         tokenList.inc()
@@ -138,7 +113,4 @@ class AST:
         tokenList.set_current_token_index(0)
         self.root = AstNode.process_program()
 
-    def to_dict(self):
-        return {
-            'root': self.root.to_dict()
-        }
+
