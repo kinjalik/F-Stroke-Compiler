@@ -381,7 +381,7 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     # Processing pre-built functions
     name = call_body.child_nodes[0].value
     if name == 'read':
-        return BuiltIns.read(call_body, opcodes)
+        return BuiltIns.read(call_body, ctx, opcodes)
     elif name == 'setq':
         return BuiltIns.setq(call_body, ctx, opcodes)
     elif name == 'cond':
@@ -512,16 +512,18 @@ class Declared:
 
 class BuiltIns:
     @staticmethod
-    def read(body: AstNode, opcodes: OpcodeList):
+    def read(body: AstNode, ctx: Context, opcodes: OpcodeList):
         """
         INPUT  (0): | EoS |
         OUTPUT (1): | EoS | Value from input
         """
         assert len(body.child_nodes) == 2
+
+        process_call(body.child_nodes[1], ctx, opcodes)
         
-        arg_num = body.child_nodes[1].value * 32
-        offset = dec_to_hex(arg_num)
-        opcodes.add('PUSH', offset)
+        opcodes.add('PUSH', dec_to_hex(0x20))
+        opcodes.add('MUL')
+
         opcodes.add('CALLDATALOAD')
 
     @staticmethod
@@ -594,14 +596,15 @@ class BuiltIns:
 
     @staticmethod
     def nonequal(body: AstNode, ctx: Context, opcodes: OpcodeList):
-        for i in range(1, 3):
-            process_call(body.child_nodes[i], ctx, opcodes)
         """
-        INPUT  (2): | EoS | Value 1 | Value 2 
+        INPUT  (2): | EoS | Value 1 | Value 2
         OUTPUT (1): | EoS | Does Value 1 differs from Value 2 (bool)
         """
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
 
         assert len(body.child_nodes) == 3
+
         opcodes.add('EQ')
         opcodes.add('PUSH', dec_to_hex(0))
         opcodes.add('EQ')
@@ -1010,6 +1013,7 @@ class VirtualStackHelper:
         OUTPUT: | EoS |
         """
         VirtualStackHelper.load_prev_gap(opcodes)
+
         VirtualStackHelper.store_new_gap(opcodes)
 
 
