@@ -1,7 +1,199 @@
-from typing import Any, List
 import sys
+from enum import Enum
+from typing import List
+from enum import Enum
+from typing import Generic, List, Any
 
-from AST import AST, AstNode, AstNodeType
+
+class Terminal(Enum):
+    UNKNOWN = -1
+    EOF = 1
+    SPACE = 2
+    LP = 3
+    RP = 4
+    Letter = 5
+    Digit = 6
+
+
+class Token:
+    type: Terminal
+    value: str
+
+    def __init__(self, char: str):
+        self.value = char
+        if char == ' ':
+            self.type = Terminal.SPACE
+        elif char == '(':
+            self.type = Terminal.LP
+        elif char == ')':
+            self.type = Terminal.RP
+        elif char in '1234567890':
+            self.type = Terminal.Digit
+        elif char in 'qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM':
+            self.type = Terminal.Letter
+        elif char == chr(0):
+            self.type = Terminal.EOF
+        else:
+            self.type = Terminal.UNKNOWN
+
+    @staticmethod
+    def get_eof():
+        return Token(chr(0))
+
+
+class TokenList:
+    tokens: List[Token]
+    length: int
+    currentTokenIndex: int
+
+    def __init__(self, rawCode: str):
+        self.tokens = [Token(x) for x in preprocess_code(rawCode)]
+        self.tokens.append(Token.get_eof())
+        self.length = len(self.tokens)
+        self.currentTokenIndex = 0
+
+    def __len__(self):
+        return self.length
+
+    def set_current_token_index(self, val: int) -> None:
+        self.currentTokenIndex = val
+
+    def get_current_token_index(self) -> int:
+        return self.currentTokenIndex
+
+    def get_current_token(self) -> Token:
+        return self.tokens[self.currentTokenIndex]
+
+    def get_next_token(self) -> Token:
+        return self.tokens[self.currentTokenIndex + 1]
+
+    def inc(self):
+        self.currentTokenIndex += 1
+
+
+def preprocess_code(formatted_code: str):
+    formatted_code = formatted_code.replace('\n', ' ')
+    formatted_code = formatted_code.replace('\t', ' ')
+    while '  ' in formatted_code:
+        formatted_code = formatted_code.replace('  ', ' ')
+    while formatted_code[-1] == ' ':
+        formatted_code = formatted_code[:-1]
+
+
+    return formatted_code
+
+
+def get_tokens_array(rawCode: str):
+    return [Token(x) for x in preprocess_code(rawCode)]
+
+tokenList: TokenList
+
+
+class AstNodeType(Enum):
+    Program = 0
+    List = 1
+    Element = 2
+    Atom = 3
+    Literal = 4
+    Identifier = 5
+    Integer = 6
+
+
+class AstNode:
+    type: AstNodeType
+    value: Any
+    child_nodes: List = list()
+
+    def __init__(self, type: AstNodeType, value: Any):
+        self.type = type
+        self.value = value
+        self.child_nodes = list()
+
+    def add_child(self, child_node):
+        self.child_nodes.append(child_node)
+
+    @staticmethod
+    def process_program():
+        global tokenList
+        node = AstNode(AstNodeType.Program, None)
+        while tokenList.get_current_token().type != Terminal.EOF:
+            if tokenList.get_current_token().type == Terminal.SPACE:
+                tokenList.inc()
+                continue
+            node.add_child(AstNode.process_element())
+        return node
+
+    @staticmethod
+    def process_element():
+        global tokenList
+        if tokenList.get_current_token().type == Terminal.Letter:
+            return AstNode.process_atom()
+        elif tokenList.get_current_token().type == Terminal.Digit:
+            return AstNode.process_literal()
+        elif tokenList.get_current_token().type == Terminal.LP:
+            return AstNode.process_list()
+
+    @staticmethod
+    def process_list():
+        global tokenList
+        node = AstNode(AstNodeType.List, None)
+
+        tokenList.inc()
+        while tokenList.get_current_token().type != Terminal.RP:
+            if tokenList.get_current_token().type == Terminal.SPACE:
+                tokenList.inc()
+                continue
+            node.add_child(AstNode.process_element())
+        tokenList.inc()
+
+        return node
+
+    # @staticmethod
+    # def process_atom():
+    #     global tokenList
+    #     logger.debug('Building node: Atom')
+    #     node = AstNode(Type.Atom, None)
+    #     node.add_child(AstNode.process_identifier())
+    #     return node
+
+    @staticmethod
+    def process_atom():
+        global tokenList
+        node = AstNode(AstNodeType.Atom, None)
+
+        value: str = tokenList.get_current_token().value
+
+        tokenList.inc()
+        while tokenList.get_current_token().type == Terminal.Letter or tokenList.get_current_token().type == Terminal.Digit:
+            value += tokenList.get_current_token().value
+            tokenList.inc()
+
+        node.value = value.lower()
+        return node
+
+    @staticmethod
+    def process_literal():
+        global tokenList
+        node = AstNode(AstNodeType.Literal, None)
+        value = tokenList.get_current_token().value
+
+        tokenList.inc()
+        while tokenList.get_current_token().type == Terminal.Digit:
+            value += tokenList.get_current_token().value
+            tokenList.inc()
+
+        node.value = int(value)
+        return node
+
+
+class AST:
+    root: AstNode
+
+    def __init__(self, token_list: TokenList):
+        global tokenList
+        tokenList = token_list
+        tokenList.set_current_token_index(0)
+        self.root = AstNode.process_program()
 
 
 ADDRESS_LENGTH = 32
@@ -81,7 +273,6 @@ class OpcodeList:
 
     def add(self, name: str, extra_value=None):
         self.list.append(Opcode(name, extra_value))
-        assert self.list[-1].id <= 255 ** ADDRESS_LENGTH
 
     def get_str(self):
         res = ''
@@ -125,12 +316,12 @@ def generate_code(ast: AST):
     jump_to_prog_start_i = len(opcodes.list) - 1
     opcodes.add('JUMP')
 
-
+    prog_body = None
     for el in ast.root.child_nodes:
         context = Context()
 
         if el.child_nodes[0].value == 'prog':
-
+            prog_body = el
             context.is_prog = True
             # Jump from header to prog body
             opcodes.add('JUMPDEST')
@@ -146,29 +337,31 @@ def generate_code(ast: AST):
             opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS)
 
         else:
-            assert el.child_nodes[0].value == 'func'
             Declared.declare(el, context, opcodes)
+    res = opcodes.get_str()
+    return res
 
-    print_readable_code(opcodes)
-    return opcodes.get_str()
+def validate_byte_code(code: str) -> bool:
+    for c in code:
+        if c not in '1234567890abcdefABCDEF':
+            return False
 
+    insturcion_codes = [getInstructionCode[key] for key in getInstructionCode]
 
-def print_readable_code(opcodes: OpcodeList):
-    filename = 'generated_code.ebc'
-    code_output = open(filename, 'w+')
-    for opcode in opcodes.list:
-        res = f"{dec_to_hex(opcode.id)}: {getInstructionCode[opcode.name]} "
-        res += f"{('  ' * ADDRESS_LENGTH) if opcode.name != 'PUSH' else opcode.extra_value} "
-        res += f"{opcode.name}"
-        if opcode.name == 'PUSH':
-            res += f" 0x{opcode.extra_value}"
-        res += '\n'
-        code_output.write(res)
-    code_output.flush()
-    code_output.close()
+    i = 0
+    while i < len(code):
+        cur_code = code[i] + code[i + 1]
+        i += 2
+        if cur_code not in insturcion_codes:
+            return False
+        if cur_code == getInstructionCode['PUSH']:
+            i += 2 * ADDRESS_LENGTH
+
+    return True
 
 
 def process_code_block(prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
+    # assert prog_body.type == AstNodeType.List
     for call in prog_body.child_nodes:
         process_call(call, ctx, opcodes)
 
@@ -188,17 +381,17 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     # Processing pre-built functions
     name = call_body.child_nodes[0].value
     if name == 'read':
-        return BuiltIns.read(call_body, opcodes)
-    elif name == 'break':
-        return BuiltIns.bbreak(call_body, ctx, opcodes)
-    elif name == 'cond':
-        return BuiltIns.cond(call_body, ctx, opcodes)
-    elif name == 'return':
-        return BuiltIns.rreturn(call_body, ctx, opcodes)
+        return BuiltIns.read(call_body, ctx, opcodes)
     elif name == 'setq':
         return BuiltIns.setq(call_body, ctx, opcodes)
+    elif name == 'cond':
+        return BuiltIns.cond(call_body, ctx, opcodes)
     elif name == 'while':
         return BuiltIns.wwhile(call_body, ctx, opcodes)
+    elif name == 'break':
+        return BuiltIns.bbreak(call_body, ctx, opcodes)
+    elif name == 'return':
+        return BuiltIns.rreturn(call_body, ctx, opcodes)
     elif name == 'plus':
         return BuiltIns.plus(call_body, ctx, opcodes)
     elif name == 'minus':
@@ -217,7 +410,7 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
         return BuiltIns.lesseq(call_body, ctx, opcodes)
     elif name == 'greater':
         return BuiltIns.greater(call_body, ctx, opcodes)
-    elif name == 'greaterq':
+    elif name == 'greatereq':
         return BuiltIns.greatereq(call_body, ctx, opcodes)
     elif name == 'or':
         return BuiltIns.oor(call_body, ctx, opcodes)
@@ -229,7 +422,7 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
     if name in Declared.addr_by_name:
         return Declared.call(call_body, ctx, opcodes)
 
-    print(f'No builtin found for {name}')
+    # print(f'No builtin found for {name}')
 
     return 0
     # print(name)
@@ -239,11 +432,13 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
 
 
 def process_literal(call_body: AstNode, opcodes: OpcodeList):
+    assert call_body.type == AstNodeType.Literal
     value = dec_to_hex(call_body.value)
     opcodes.add('PUSH', value)
 
 
 def process_atom(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+    assert call_body.type == AstNodeType.Atom
     atom_name = call_body.value
     atom_address, is_new = ctx.get_atom_addr(atom_name)
     VirtualStackHelper.load_atom_value(opcodes, atom_address)
@@ -254,6 +449,9 @@ class Declared:
 
     @staticmethod
     def call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+        assert call_body.type == AstNodeType.List
+        assert call_body.child_nodes[0].type == AstNodeType.Literal or call_body.child_nodes[0].type == AstNodeType.Atom
+        
         # Prepare arguments
         for i in range(1, len(call_body.child_nodes)):
             process_call(call_body.child_nodes[i], ctx, opcodes)
@@ -272,6 +470,8 @@ class Declared:
 
     @staticmethod
     def declare(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+        assert call_body.type == AstNodeType.List
+        assert call_body.child_nodes[0].type == AstNodeType.Literal or call_body.child_nodes[0].type == AstNodeType.Atom
         assert call_body.child_nodes[0].value == 'func'
         """
         INPUT:  | EoS | Arg1 | ... | ArgN | Back address
@@ -312,14 +512,18 @@ class Declared:
 
 class BuiltIns:
     @staticmethod
-    def read(body: AstNode, opcodes: OpcodeList):
+    def read(body: AstNode, ctx: Context, opcodes: OpcodeList):
         """
         INPUT  (0): | EoS |
         OUTPUT (1): | EoS | Value from input
         """
-        arg_num = body.child_nodes[1].value * 32
-        offset = dec_to_hex(arg_num)
-        opcodes.add('PUSH', offset)
+        assert len(body.child_nodes) == 2
+
+        process_call(body.child_nodes[1], ctx, opcodes)
+        
+        opcodes.add('PUSH', dec_to_hex(0x20))
+        opcodes.add('MUL')
+
         opcodes.add('CALLDATALOAD')
 
     @staticmethod
@@ -328,6 +532,8 @@ class BuiltIns:
         INPUT  (0): | EoS |
         OUTPUT (0): | EoS |
         """
+        assert len(body.child_nodes) == 3 or len(body.child_nodes) == 4
+        
         # Conditions check
         process_call(body.child_nodes[1], ctx, opcodes)
         # JUMP TO TRUE
@@ -368,6 +574,9 @@ class BuiltIns:
         INPUT  (1): | EoS | New Atom value
         OUTPUT (0): | EoS |
         """
+        
+        assert len(body.child_nodes) == 3
+        
         atom_name = body.child_nodes[1].value
         address, is_new = ctx.get_atom_addr(atom_name)
         VirtualStackHelper.store_atom_value(opcodes, address)
@@ -380,16 +589,22 @@ class BuiltIns:
         INPUT  (2): | EoS | Value 1 | Value 2 
         OUTPUT (1): | EoS | Does value 1 equals value 2 (bool)
         """
+
+        assert len(body.child_nodes) == 3
+        
         opcodes.add('EQ')
 
     @staticmethod
     def nonequal(body: AstNode, ctx: Context, opcodes: OpcodeList):
-        for i in range(1, 3):
-            process_call(body.child_nodes[i], ctx, opcodes)
         """
-        INPUT  (2): | EoS | Value 1 | Value 2 
+        INPUT  (2): | EoS | Value 1 | Value 2
         OUTPUT (1): | EoS | Does Value 1 differs from Value 2 (bool)
         """
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+
+        assert len(body.child_nodes) == 3
+
         opcodes.add('EQ')
         opcodes.add('PUSH', dec_to_hex(0))
         opcodes.add('EQ')
@@ -401,6 +616,7 @@ class BuiltIns:
         INPUT  (1): | EoS | value (bool)
         OUTPUT (1): | EoS | !value (bool)
         """
+        assert len(body.child_nodes) == 2
         opcodes.add('PUSH', dec_to_hex(0))
         opcodes.add('EQ')
 
@@ -412,6 +628,7 @@ class BuiltIns:
         INPUT  (2): | EoS | Value 1 | Value 2 
         OUTPUT (1): | EoS | Sum of values
         """
+        assert len(body.child_nodes) == 3
         opcodes.add('ADD')
 
     @staticmethod
@@ -422,6 +639,7 @@ class BuiltIns:
         INPUT  (2): | EoS | Value 1 | Value 2 
         OUTPUT (1): | EoS | Value 1 - Value 2
         """
+        assert len(body.child_nodes) == 3
         opcodes.add('SWAP1')
         opcodes.add('SUB')
 
@@ -433,6 +651,7 @@ class BuiltIns:
         INPUT  (2): | EoS | Value 1 | Value 2 
         OUTPUT (1): | EoS | Value 1 * Value 2
         """
+        assert len(body.child_nodes) == 3
         opcodes.add('MUL')
 
     @staticmethod
@@ -443,6 +662,7 @@ class BuiltIns:
         INPUT  (2): | EoS | Value 1 | Value 2
         OUTPUT (1): | EoS | Value 1 // Value 2
         """
+        assert len(body.child_nodes) == 3
         opcodes.add('SWAP1')
         opcodes.add('DIV')
 
@@ -453,7 +673,7 @@ class BuiltIns:
         INPUT  (1): | EoS | Some value 
         OUTPUT (0): | EoS | 
         """
-
+        assert len(body.child_nodes) == 2
         if ctx.is_prog:
             opcodes.add('PUSH', dec_to_hex(0))
             opcodes.add('MSTORE')
@@ -466,7 +686,7 @@ class BuiltIns:
             opcodes.add('JUMP')
 
     while_count = 0
-    current_while = None
+    current_while = 0
 
     @staticmethod
     def bbreak(body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -474,6 +694,7 @@ class BuiltIns:
         INPUT:  | EoS |
         OUTPUT: | EoS |
         """
+        assert len(body.child_nodes) == 1
         opcodes.add('PUSH', dec_to_hex(0))
         opcodes.add('JUMP', dec_to_hex(BuiltIns.current_while))
         pass
@@ -484,6 +705,7 @@ class BuiltIns:
         INPUT:  | EoS |
         OUTPUT: | EoS |
         """
+        assert len(body.child_nodes) == 3
         prev_while = BuiltIns.current_while
         BuiltIns.current_while = BuiltIns.while_count
         BuiltIns.while_count += 1
@@ -520,6 +742,7 @@ class BuiltIns:
         INPUT  (2): | EoS | Value 1 | Value 2
         OUTPUT (1): | EoS | Is Value 1 lesser than Value 2
         """
+        assert len(body.child_nodes) == 3
         process_call(body.child_nodes[1], ctx, opcodes)
         process_call(body.child_nodes[2], ctx, opcodes)
         # | n | b | EOS |
@@ -532,6 +755,7 @@ class BuiltIns:
         INPUT  (2): | EoS | Value 1 | Value 2
         OUTPUT (1): | EoS | Does Value 1 less or equals Value (bool)
         """
+        assert len(body.child_nodes) == 3
         process_call(body.child_nodes[1], ctx, opcodes)
         process_call(body.child_nodes[2], ctx, opcodes)
         opcodes.add('EQ')
@@ -556,6 +780,7 @@ class BuiltIns:
         INPUT  (2): | EoS | Value 1 | Value 2 
         OUTPUT (1): | EoS | Is Value 1 greater than Value 2
         """
+        assert len(body.child_nodes) == 3
         opcodes.add('LT')
 
 
@@ -565,6 +790,7 @@ class BuiltIns:
         INPUT  (2): | EoS | Value 1 | Value 2
         OUTPUT (1): | EoS | Does Value 1 less or equals Value (bool)
         """
+        assert len(body.child_nodes) == 3
         process_call(body.child_nodes[1], ctx, opcodes)
         process_call(body.child_nodes[2], ctx, opcodes)
         opcodes.add('EQ')
@@ -583,6 +809,7 @@ class BuiltIns:
         INPUT  (2): | EoS | v1 (bool) | v2 (bool) 
         OUTPUT (1): | EoS | v1 OR v2 (bool)
         """
+        assert len(body.child_nodes) == 3
         opcodes.add('OR')
 
     @staticmethod
@@ -593,6 +820,7 @@ class BuiltIns:
         INPUT  (2): | EoS | v1 (bool) | v2 (bool) 
         OUTPUT (1): | EoS | v1 AND v2 (bool)
         """
+        assert len(body.child_nodes) == 3
         opcodes.add('AND')
 
 
@@ -785,4 +1013,13 @@ class VirtualStackHelper:
         OUTPUT: | EoS |
         """
         VirtualStackHelper.load_prev_gap(opcodes)
+
         VirtualStackHelper.store_new_gap(opcodes)
+
+
+if __name__ == '__main__':
+    # code = open('input.fst').read()
+    code = sys.stdin.read()
+    tokens = TokenList(code)
+    tree = AST(tokens)
+    print(generate_code(tree))
