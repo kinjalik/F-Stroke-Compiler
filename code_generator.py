@@ -45,18 +45,15 @@ def dec_to_hex(number: int, pad: int = 2 * ADDRESS_LENGTH):
     return '0x{0:0{1}X}'.format(number, pad)[2:]
 
 
-opcodes_counter = 0
-
-
 class Opcode:
     id: int
     name: str
     extra_value: Any
+    __counter = 0
 
     def __init__(self, name: str, extra_value=None):
-        global opcodes_counter
-        self.id = opcodes_counter
-        opcodes_counter += 1
+        self.id = Opcode.__counter
+        Opcode.__counter += 1
         self.name = name
         if extra_value is not None:
             self.extra_value = extra_value
@@ -65,10 +62,14 @@ class Opcode:
         else:
             self.extra_value = None
         if name == 'PUSH':
-            opcodes_counter += ADDRESS_LENGTH
+            Opcode.__counter += ADDRESS_LENGTH
 
     def get_str(self):
         return f'{getInstructionCode[self.name]}{"" if self.name != "PUSH" else self.extra_value}'
+
+    @staticmethod
+    def reset_counter():
+        Opcode.__counter = 0
 
 
 class OpcodeList:
@@ -111,59 +112,64 @@ class Context:
         return self.numByName[name] * 32, is_added
 
 
-def generate_code(ast: AST):
-    opcodes: OpcodeList = OpcodeList()
+class Generator:
+    opcodes: OpcodeList
 
-    VirtualStackHelper.init_stack(opcodes)
+    def __init__(self, ast: AST):
+        self.opcodes: OpcodeList = OpcodeList()
 
-    # Set jump to main program body
-    opcodes.add('PUSH', dec_to_hex(0))
-    jump_to_prog_start_i = len(opcodes.list) - 1
-    opcodes.add('JUMP')
+        VirtualStackHelper.init_stack(self.opcodes)
 
-    prog_body = None
-    for el in ast.root.child_nodes:
-        context = Context()
+        # Set jump to main program body
+        self.opcodes.add('PUSH', dec_to_hex(0))
+        jump_to_prog_start_i = len(self.opcodes.list) - 1
+        self.opcodes.add('JUMP')
 
-        if el.child_nodes[0].value == 'prog':
-            prog_body = el
-            context.is_prog = True
-            # Jump from header to prog body
-            opcodes.add('JUMPDEST')
-            opcodes.list[jump_to_prog_start_i].extra_value = dec_to_hex(opcodes.list[-1].id)
+        prog_body = None
+        for el in ast.root.child_nodes:
+            context = Context()
 
-            opcodes.add('PUSH', dec_to_hex(0))
-            prog_atom_count = len(opcodes.list) - 1
-            VirtualStackHelper.load_cur_atom_counter_addr(opcodes)
-            opcodes.add('MSTORE')
+            if el.child_nodes[0].value == 'prog':
+                prog_body = el
+                context.is_prog = True
+                # Jump from header to prog body
+                self.opcodes.add('JUMPDEST')
+                self.opcodes.list[jump_to_prog_start_i].extra_value = dec_to_hex(self.opcodes.list[-1].id)
 
-            process_code_block(el.child_nodes[1], context, opcodes)
+                self.opcodes.add('PUSH', dec_to_hex(0))
+                prog_atom_count = len(self.opcodes.list) - 1
+                VirtualStackHelper.load_cur_atom_counter_addr(self.opcodes)
+                self.opcodes.add('MSTORE')
 
-            opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS)
+                process_code_block(el.child_nodes[1], context, self.opcodes)
 
-        else:
-            Declared.declare(el, context, opcodes)
-    res = opcodes.get_str()
-    return res
+                self.opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS)
 
+            else:
+                Declared.declare(el, context, self.opcodes)
 
-def validate_byte_code(code: str) -> bool:
-    for c in code:
-        if c not in '1234567890abcdefABCDEF':
-            return False
+    def __validate(self, code: str):
+        for c in code:
+            if c not in '1234567890abcdefABCDEF':
+                return False
 
-    insturcion_codes = [getInstructionCode[key] for key in getInstructionCode]
+        instruction_codes = [getInstructionCode[key] for key in getInstructionCode]
 
-    i = 0
-    while i < len(code):
-        cur_code = code[i] + code[i + 1]
-        i += 2
-        if cur_code not in insturcion_codes:
-            return False
-        if cur_code == getInstructionCode['PUSH']:
-            i += 2 * ADDRESS_LENGTH
+        i = 0
+        while i < len(code):
+            cur_code = code[i] + code[i + 1]
+            i += 2
+            if cur_code not in instruction_codes:
+                return False
+            if cur_code == getInstructionCode['PUSH']:
+                i += 2 * ADDRESS_LENGTH
 
-    return True
+        return True
+
+    def get_byte_code(self):
+        byte_code = self.opcodes.get_str()
+        assert self.__validate(byte_code)
+        return byte_code
 
 
 def process_code_block(prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -820,5 +826,3 @@ class VirtualStackHelper:
         VirtualStackHelper.load_prev_gap(opcodes)
 
         VirtualStackHelper.store_new_gap(opcodes)
-
-

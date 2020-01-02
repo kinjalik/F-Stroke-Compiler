@@ -21,8 +21,8 @@ class AstNode:
     value: Any
     child_nodes: List = list()
 
-    def __init__(self, type: AstNodeType, value: Any):
-        self.type = type
+    def __init__(self, node_type: AstNodeType, value: Any):
+        self.type = node_type
         self.value = value
         self.child_nodes = list()
 
@@ -30,28 +30,28 @@ class AstNode:
         self.child_nodes.append(child_node)
 
     @staticmethod
-    def process_program():
+    def build_program():
         global tokenList
         node = AstNode(AstNodeType.Program, None)
         while tokenList.get_current_token().type != Terminal.EOF:
             if tokenList.get_current_token().type == Terminal.SPACE:
                 tokenList.inc()
                 continue
-            node.add_child(AstNode.process_element())
+            node.add_child(AstNode.build_element())
         return node
 
     @staticmethod
-    def process_element():
+    def build_element():
         global tokenList
         if tokenList.get_current_token().type == Terminal.Letter:
-            return AstNode.process_atom()
+            return AstNode.build_atom()
         elif tokenList.get_current_token().type == Terminal.Digit:
-            return AstNode.process_literal()
+            return AstNode.build_literal()
         elif tokenList.get_current_token().type == Terminal.LP:
-            return AstNode.process_list()
+            return AstNode.build_list()
 
     @staticmethod
-    def process_list():
+    def build_list():
         global tokenList
         node = AstNode(AstNodeType.List, None)
 
@@ -60,21 +60,13 @@ class AstNode:
             if tokenList.get_current_token().type == Terminal.SPACE:
                 tokenList.inc()
                 continue
-            node.add_child(AstNode.process_element())
+            node.add_child(AstNode.build_element())
         tokenList.inc()
 
         return node
 
-    # @staticmethod
-    # def process_atom():
-    #     global tokenList
-    #     logger.debug('Building node: Atom')
-    #     node = AstNode(Type.Atom, None)
-    #     node.add_child(AstNode.process_identifier())
-    #     return node
-
     @staticmethod
-    def process_atom():
+    def build_atom():
         global tokenList
         node = AstNode(AstNodeType.Atom, None)
 
@@ -90,7 +82,7 @@ class AstNode:
         return node
 
     @staticmethod
-    def process_literal():
+    def build_literal():
         global tokenList
         node = AstNode(AstNodeType.Literal, None)
         value = tokenList.get_current_token().value
@@ -111,6 +103,6 @@ class AST:
         global tokenList
         tokenList = token_list
         tokenList.set_current_token_index(0)
-        self.root = AstNode.process_program()
+        self.root = AstNode.build_program()
 
 

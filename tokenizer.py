@@ -2,6 +2,13 @@ from enum import Enum
 from typing import List
 
 
+DIGITS = '1234567890'
+LETTERS = 'qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM'
+LEFT_PARENTHESIS = '('
+RIGHT_PARENTHESIS = ')'
+SPACE = ' '
+
+
 class Terminal(Enum):
     UNKNOWN = -1
     EOF = 1
@@ -18,15 +25,15 @@ class Token:
 
     def __init__(self, char: str):
         self.value = char
-        if char == ' ':
+        if char == SPACE:
             self.type = Terminal.SPACE
-        elif char == '(':
+        elif char == LEFT_PARENTHESIS:
             self.type = Terminal.LP
-        elif char == ')':
+        elif char == RIGHT_PARENTHESIS:
             self.type = Terminal.RP
-        elif char in '1234567890':
+        elif char in DIGITS:
             self.type = Terminal.Digit
-        elif char in 'qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM':
+        elif char in LETTERS:
             self.type = Terminal.Letter
         elif char == chr(0):
             self.type = Terminal.EOF
@@ -34,7 +41,7 @@ class Token:
             self.type = Terminal.UNKNOWN
 
     @staticmethod
-    def get_eof():
+    def get_eof_token():
         return Token(chr(0))
 
 
@@ -44,8 +51,8 @@ class TokenList:
     currentTokenIndex: int
 
     def __init__(self, rawCode: str):
-        self.tokens = [Token(x) for x in preprocess_code(rawCode)]
-        self.tokens.append(Token.get_eof())
+        self.tokens = [Token(x) for x in TokenList.__preprocess_code(rawCode)]
+        self.tokens.append(Token.get_eof_token())
         self.length = len(self.tokens)
         self.currentTokenIndex = 0
 
@@ -67,17 +74,13 @@ class TokenList:
     def inc(self):
         self.currentTokenIndex += 1
 
+    @staticmethod
+    def __preprocess_code(formatted_code: str):
+        formatted_code = formatted_code.replace('\n', ' ')
+        formatted_code = formatted_code.replace('\t', ' ')
+        while '  ' in formatted_code:
+            formatted_code = formatted_code.replace('  ', ' ')
+        while formatted_code[-1] == ' ':
+            formatted_code = formatted_code[:-1]
 
-def preprocess_code(formatted_code: str):
-    formatted_code = formatted_code.replace('\n', ' ')
-    formatted_code = formatted_code.replace('\t', ' ')
-    while '  ' in formatted_code:
-        formatted_code = formatted_code.replace('  ', ' ')
-    while formatted_code[-1] == ' ':
-        formatted_code = formatted_code[:-1]
-
-    return formatted_code
-
-
-def get_tokens_array(rawCode: str):
-    return [Token(x) for x in preprocess_code(rawCode)]
+        return formatted_code

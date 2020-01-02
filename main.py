@@ -1,7 +1,7 @@
 import sys
 
 from AST import AST
-from code_generator import generate_code
+from code_generator import Generator
 from tokenizer import TokenList
 
 if __name__ == '__main__':
@@ -9,4 +9,4 @@ if __name__ == '__main__':
     # code = sys.stdin.read()
     tokens = TokenList(code)
     tree = AST(tokens)
-    print(generate_code(tree))
+    print(Generator(tree).get_byte_code())
