@@ -9,4 +9,4 @@ if __name__ == '__main__':
     # code = sys.stdin.read()
     tokens = TokenList(code)
     tree = AST(tokens)
-    print(Generator(tree).get_byte_code())
+    print(Generator(tree).run())
