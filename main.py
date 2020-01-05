@@ -1,5 +1,6 @@
 import sys
 import argparse
+import logging
 
 from AST import AST
 from code_generator import Generator
@@ -11,12 +12,9 @@ if __name__ == '__main__':
     parser.add_argument('input', type=str, help='File to input with F-Stroke code', default='input.fst')
     parser.add_argument('-o', type=str, help='File to output with Ethereum Byte Code', default='output.ebc')
     parser.add_argument('--hex-size', type=int, help='Size of hex numbers in bytes (max 32)', default=32)
-
     args = parser.parse_args()
-    print(args)
 
     code = open(args.input).read()
-
     tokens = TokenList(code)
     tree = AST(tokens)
     output = open(args.o, 'w+')

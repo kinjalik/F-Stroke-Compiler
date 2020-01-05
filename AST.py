@@ -104,5 +104,3 @@ class AST:
         tokenList = token_list
         tokenList.set_current_token_index(0)
         self.root = AstNode.build_program()
-
-

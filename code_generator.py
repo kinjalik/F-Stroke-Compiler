@@ -1,5 +1,5 @@
 from context import Context
-from dec_to_hex import dec_to_hex
+from utils import dec_to_hex
 from AST import AST, AstNode, AstNodeType
 from fst_functions.builtin import BuiltIns
 from fst_functions.declared import Declared
@@ -9,58 +9,58 @@ from singleton import Singleton
 
 
 class Generator(metaclass=Singleton):
-    opcodes: OpcodeList
-    address_length: int
-    frame_service_atoms: int
+    __opcodes: OpcodeList
+    __address_length: int
+    __frame_service_atoms: int
 
     def __init__(self, ast: AST, address_length=32, frame_service_atoms=3):
-        self.address_length = address_length
-        self.frame_service_atoms = frame_service_atoms
+        self.__address_length = address_length
+        self.__frame_service_atoms = frame_service_atoms
 
         assert 32 >= address_length >= 1
         assert frame_service_atoms >= 2
 
-        self.opcodes: OpcodeList = OpcodeList(address_length)
+        self.__opcodes: OpcodeList = OpcodeList(address_length)
         self.__ast = ast
 
         # Init Virtual stack and function Singletons
-        VirtualStackHelper(address_length, frame_service_atoms).init_stack(self.opcodes)
+        VirtualStackHelper(address_length, frame_service_atoms).init_stack(self.__opcodes)
         SpecialForms(address_length)
-        BuiltIns(self.address_length)
+        BuiltIns(self.__address_length)
         Declared(address_length, frame_service_atoms)
 
     def run(self):
         # Set jump to main program body
-        self.opcodes.add('PUSH', dec_to_hex(0, 2 * self.address_length))
-        jump_to_prog_start_i = len(self.opcodes.list) - 1
-        self.opcodes.add('JUMP')
+        self.__opcodes.add('PUSH', dec_to_hex(0, 2 * self.__address_length))
+        jump_to_prog_start_i = len(self.__opcodes.list) - 1
+        self.__opcodes.add('JUMP')
 
         for el in self.__ast.root.child_nodes:
-            context = Context(self.frame_service_atoms)
+            context = Context(self.__frame_service_atoms)
 
             if el.child_nodes[0].value == 'prog':
                 context.is_prog = True
                 # Jump from header to prog body
-                self.opcodes.add('JUMPDEST')
-                self.opcodes.list[jump_to_prog_start_i].extra_value = dec_to_hex(self.opcodes.list[-1].id,
-                                                                                 2 * self.address_length)
+                self.__opcodes.add('JUMPDEST')
+                self.__opcodes.list[jump_to_prog_start_i].extra_value = dec_to_hex(self.__opcodes.list[-1].id,
+                                                                                   2 * self.__address_length)
 
-                self.opcodes.add('PUSH', dec_to_hex(0, 2 * self.address_length))
-                prog_atom_count = len(self.opcodes.list) - 1
-                VirtualStackHelper().load_cur_atom_counter_addr(self.opcodes)
-                self.opcodes.add('MSTORE')
+                self.__opcodes.add('PUSH', dec_to_hex(0, 2 * self.__address_length))
+                prog_atom_count = len(self.__opcodes.list) - 1
+                VirtualStackHelper().load_cur_atom_counter_addr(self.__opcodes)
+                self.__opcodes.add('MSTORE')
 
-                self.process_code_block(el.child_nodes[1], context, self.opcodes)
+                self.process_code_block(el.child_nodes[1], context, self.__opcodes)
 
-                self.opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - self.frame_service_atoms,
-                                                                            2 * self.address_length)
+                self.__opcodes.list[prog_atom_count].extra_value = \
+                    dec_to_hex(context.id_counter - self.__frame_service_atoms, 2 * self.__address_length)
 
             else:
-                self.declare_function(el, context, self.opcodes)
+                self.declare_function(el, context, self.__opcodes)
         return self
 
     def __str__(self):
-        byte_code = self.opcodes.get_str()
+        byte_code = self.__opcodes.get_str()
         return byte_code
 
     def process_code_block(self, prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -101,7 +101,7 @@ class Generator(metaclass=Singleton):
 
     def process_literal(self, call_body: AstNode, opcodes: OpcodeList):
         assert call_body.type == AstNodeType.Literal
-        value = dec_to_hex(call_body.value, 2 * self.address_length)
+        value = dec_to_hex(call_body.value, 2 * self.__address_length)
         opcodes.add('PUSH', value)
 
     def process_atom(self, call_body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -143,8 +143,8 @@ class Generator(metaclass=Singleton):
         self.process_call(call_body.child_nodes[3], ctx, opcodes)
 
         # Set atom counter, part 2
-        opcodes.list[func_atom_counter].extra_value = dec_to_hex(ctx.counter - self.frame_service_atoms,
-                                                                 2 * self.address_length)
+        opcodes.list[func_atom_counter].extra_value = \
+            dec_to_hex(ctx.id_counter - self.__frame_service_atoms, 2 * self.__address_length)
 
         # Remove frame and leave function
         VirtualStackHelper().load_back_address(opcodes)
@@ -153,6 +153,10 @@ class Generator(metaclass=Singleton):
 
 
 class SpecialForms(metaclass=Singleton):
+    __funcs: dict
+    __while_count: int
+    __current_while_id: int
+    __address_length: int
 
     def __init__(self, address_length: int):
         self.__funcs = {
@@ -160,9 +164,9 @@ class SpecialForms(metaclass=Singleton):
             'while': SpecialForms.__while,
             'break': SpecialForms.__break
         }
-        self.while_count = 0
-        self.current_while = 0
-        self.address_length = address_length
+        self.__while_count = 0
+        self.__current_while_id = 0
+        self.__address_length = address_length
 
     def has(self, name: str):
         return name in self.__funcs
@@ -190,7 +194,7 @@ class SpecialForms(metaclass=Singleton):
         # TRUE BLOCK
         opcodes.add('JUMPDEST')
         block_id = opcodes.list[-1].id
-        opcodes.list[jump_from_check_to_true].extra_value = dec_to_hex(block_id, 2 * self.address_length)
+        opcodes.list[jump_from_check_to_true].extra_value = dec_to_hex(block_id, 2 * self.__address_length)
         generator.process_call(body.child_nodes[2], ctx, opcodes)
         opcodes.add('PUSH', )
         jump_from_true_to_end = len(opcodes.list) - 1
@@ -198,7 +202,7 @@ class SpecialForms(metaclass=Singleton):
         # FALSE BLOCK
         opcodes.add('JUMPDEST')
         block_id = opcodes.list[-1].id
-        opcodes.list[jump_from_check_to_false].extra_value = dec_to_hex(block_id, 2 * self.address_length)
+        opcodes.list[jump_from_check_to_false].extra_value = dec_to_hex(block_id, 2 * self.__address_length)
         if len(body.child_nodes) == 4:
             generator.process_call(body.child_nodes[3], ctx, opcodes)
         opcodes.add('PUSH')
@@ -207,8 +211,8 @@ class SpecialForms(metaclass=Singleton):
         # END
         opcodes.add('JUMPDEST')
         block_id = opcodes.list[-1].id
-        opcodes.list[jump_from_true_to_end].extra_value = dec_to_hex(block_id, 2 * self.address_length)
-        opcodes.list[jump_from_false_to_end].extra_value = dec_to_hex(block_id, 2 * self.address_length)
+        opcodes.list[jump_from_true_to_end].extra_value = dec_to_hex(block_id, 2 * self.__address_length)
+        opcodes.list[jump_from_false_to_end].extra_value = dec_to_hex(block_id, 2 * self.__address_length)
 
     def __break(self, body: AstNode, ctx: Context, opcodes: OpcodeList):
         """
@@ -216,8 +220,8 @@ class SpecialForms(metaclass=Singleton):
         OUTPUT: | EoS |
         """
         assert len(body.child_nodes) == 1
-        opcodes.add('PUSH', dec_to_hex(0, 2 * self.address_length))
-        opcodes.add('JUMP', dec_to_hex(self.current_while, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * self.__address_length))
+        opcodes.add('JUMP', dec_to_hex(self.__current_while_id, 2 * self.__address_length))
         pass
 
     def __while(self, body: AstNode, ctx: Context, opcodes: OpcodeList, generator: Generator):
@@ -226,11 +230,11 @@ class SpecialForms(metaclass=Singleton):
         OUTPUT: | EoS |
         """
         assert len(body.child_nodes) == 3
-        prev_while = self.current_while
-        self.current_while = self.while_count
-        self.while_count += 1
-        opcodes.add('JUMPDEST', dec_to_hex(self.current_while, 2 * self.address_length))
-        jumpdest_to_condition_check_id = dec_to_hex(opcodes.list[-1].id, 2 * self.address_length)
+        prev_while = self.__current_while_id
+        self.__current_while_id = self.__while_count
+        self.__while_count += 1
+        opcodes.add('JUMPDEST', dec_to_hex(self.__current_while_id, 2 * self.__address_length))
+        jumpdest_to_condition_check_id = dec_to_hex(opcodes.list[-1].id, 2 * self.__address_length)
         generator.process_call(body.child_nodes[1], ctx, opcodes)
         # if true: jump to while body
         opcodes.add('PUSH')
@@ -243,16 +247,16 @@ class SpecialForms(metaclass=Singleton):
 
         # while body
         opcodes.add('JUMPDEST')
-        opcodes.list[jump_to_while_body].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * self.address_length)
+        opcodes.list[jump_to_while_body].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * self.__address_length)
         generator.process_call(body.child_nodes[2], ctx, opcodes)
         opcodes.add('PUSH', jumpdest_to_condition_check_id)
         opcodes.add('JUMP')
         # while end
         opcodes.add('JUMPDEST')
-        opcodes.list[jump_to_while_end].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * self.address_length)
+        opcodes.list[jump_to_while_end].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * self.__address_length)
         for i in range(len(opcodes.list)):
-            if opcodes.list[i].name == 'JUMP' and opcodes.list[i].extra_value == dec_to_hex(self.current_while,
-                                                                                            2 * self.address_length):
-                opcodes.list[i - 1].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * self.address_length)
+            if opcodes.list[i].name == 'JUMP' and opcodes.list[i].extra_value == dec_to_hex(self.__current_while_id,
+                                                                                            2 * self.__address_length):
+                opcodes.list[i - 1].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * self.__address_length)
                 opcodes.list[i].extra_value = None
         BuiltIns.current_while = prev_while

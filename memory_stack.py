@@ -1,4 +1,4 @@
-from dec_to_hex import dec_to_hex
+from utils import dec_to_hex
 from opcodes import OpcodeList
 from singleton import Singleton
 
@@ -20,29 +20,32 @@ EoS - End of Stack
 
 
 class VirtualStackHelper(metaclass=Singleton):
+    __address_length: int
+    __frame_service_atoms: int
+
     def __init__(self, address_length, frame_service_atoms):
-        self.address_length = address_length
-        self.frame_service_atoms = frame_service_atoms
+        self.__address_length = address_length
+        self.__frame_service_atoms = frame_service_atoms
 
     def init_stack(self, opcodes: OpcodeList):
         """
         NO SIDE EFFECTS
         """
         # Set ZERO FRAME (prog frame) gap = 0x40
-        opcodes.add('PUSH', dec_to_hex(0x40, 2 * self.address_length))
-        opcodes.add('PUSH', dec_to_hex(0, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0x40, 2 * self.__address_length))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * self.__address_length))
         opcodes.add('MSTORE')
         # Init zero frame
         # Set start of previous frame and back address as 0x00
-        opcodes.add('PUSH', dec_to_hex(0x0, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0x0, 2 * self.__address_length))
         opcodes.add('DUP1')
-        opcodes.add('PUSH', dec_to_hex(0x40, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0x40, 2 * self.__address_length))
         opcodes.add('MSTORE')
-        opcodes.add('PUSH', dec_to_hex(0x40 + 0x40, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0x40 + 0x40, 2 * self.__address_length))
         opcodes.add('MSTORE')
         # Set counter of atoms as 0x00
-        opcodes.add('PUSH', dec_to_hex(0x0, 2 * self.address_length))
-        opcodes.add('PUSH', dec_to_hex(0x40 + 0x20, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0x0, 2 * self.__address_length))
+        opcodes.add('PUSH', dec_to_hex(0x40 + 0x20, 2 * self.__address_length))
         opcodes.add('MSTORE')
 
     def store_atom_value(self, opcodes: OpcodeList, atom_address: int):
@@ -59,7 +62,7 @@ class VirtualStackHelper(metaclass=Singleton):
         OUTPUT: | EoS | Address of Atom on provided address
         """
         self.load_cur_gap(opcodes)
-        opcodes.add('PUSH', dec_to_hex(atom_address, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(atom_address, 2 * self.__address_length))
         opcodes.add('ADD')
 
     def load_atom_value(self, opcodes: OpcodeList, atom_address: int):
@@ -75,7 +78,7 @@ class VirtualStackHelper(metaclass=Singleton):
         INPUT:  | EoS |
         OUTPUT: | EoS | Gap of current frame |
         """
-        opcodes.add('PUSH', dec_to_hex(0, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * self.__address_length))
         opcodes.add('MLOAD')
 
     def store_new_gap(self, opcodes: OpcodeList):
@@ -83,7 +86,7 @@ class VirtualStackHelper(metaclass=Singleton):
         INPUT:  | EoS | New gap
         OUTPUT: | EoS |
         """
-        opcodes.add('PUSH', dec_to_hex(0, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * self.__address_length))
         opcodes.add('MSTORE')
 
     def load_prev_gap(self, opcodes: OpcodeList):
@@ -100,7 +103,7 @@ class VirtualStackHelper(metaclass=Singleton):
         OUTPUT: | EoS | Address of Current Atom counter
         """
         self.load_cur_gap(opcodes)
-        opcodes.add('PUSH', dec_to_hex(0x20, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0x20, 2 * self.__address_length))
         opcodes.add('ADD')
 
     def load_cur_atom_counter(self, opcodes: OpcodeList):
@@ -117,7 +120,7 @@ class VirtualStackHelper(metaclass=Singleton):
         OUTPUT: | EoS | Address of Current Back address
         """
         self.load_cur_gap(opcodes)
-        opcodes.add('PUSH', dec_to_hex(0x40, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(0x40, 2 * self.__address_length))
         opcodes.add('ADD')
 
     def load_back_address(self, opcodes: OpcodeList):
@@ -141,10 +144,10 @@ class VirtualStackHelper(metaclass=Singleton):
         INPUT:  | EoS |
         OUTPUT: | EoS | Size of current frame
         """
-        opcodes.add('PUSH', dec_to_hex(self.frame_service_atoms * 0x20, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(self.__frame_service_atoms * 0x20, 2 * self.__address_length))
 
         self.load_cur_atom_counter(opcodes)
-        opcodes.add('PUSH', dec_to_hex(32, 2 * self.address_length))
+        opcodes.add('PUSH', dec_to_hex(32, 2 * self.__address_length))
         opcodes.add('MUL')
 
         opcodes.add('ADD')

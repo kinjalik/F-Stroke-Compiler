@@ -1,6 +1,6 @@
 from typing import Any, List
 
-from dec_to_hex import dec_to_hex
+from utils import dec_to_hex
 
 
 class Opcode:

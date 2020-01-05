@@ -1,11 +1,14 @@
 from AST import AstNode
 from context import Context
-from dec_to_hex import dec_to_hex
+from utils import dec_to_hex
 from memory_stack import VirtualStackHelper
 from opcodes import OpcodeList
 from singleton import Singleton
 
 
+# Reason: Inspection reacts on signatures of functions, which contains unused variables for interface
+#         unification purposes
+# noinspection PyUnusedLocal,PyMethodMayBeStatic
 class BuiltIns(metaclass=Singleton):
     def __init__(self, address_length):
         self.address_length = address_length
@@ -147,7 +150,6 @@ class BuiltIns(metaclass=Singleton):
             VirtualStackHelper().load_back_address(opcodes)
             VirtualStackHelper().remove_frame(opcodes)
             opcodes.add('JUMP')
-
 
     def __less(self, body: AstNode, ctx: Context, opcodes: OpcodeList):
         """

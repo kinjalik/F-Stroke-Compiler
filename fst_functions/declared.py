@@ -1,6 +1,6 @@
 from AST import AstNode, AstNodeType
 from context import Context
-from dec_to_hex import dec_to_hex
+from utils import dec_to_hex
 from opcodes import OpcodeList
 from singleton import Singleton
 
