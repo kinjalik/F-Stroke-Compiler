@@ -1,169 +1,54 @@
-from typing import Any, List
-
+from context import Context
+from dec_to_hex import dec_to_hex
 from AST import AST, AstNode, AstNodeType
+from opcodes import OpcodeList
 
 ADDRESS_LENGTH = 32
 FRAME_SERVICE_ATOMS = 3
 assert 32 >= ADDRESS_LENGTH >= 1
 assert FRAME_SERVICE_ATOMS >= 2
 
-getInstructionCode = {
-    'STOP': '00',
-    'ADD': '01',
-    'MUL': '02',
-    'SUB': '03',
-    'DIV': '04',
-    'MOD': '06',
-    'ADDMOD': '08',
-    'MULMOD': '09',
-    'EXP': '0a',
-    'LT': '10',
-    'GT': '11',
-    'SLT': '12',
-    'SGT': '13',
-    'EQ': '14',
-    'ISZERO': '15',
-    'AND': '16',
-    'OR': '17',
-    'XOR': '18',
-    'NOT': '19',
-    'CALLDATALOAD': '35',
-    'MLOAD': '51',
-    'MSTORE': '52',
-    'JUMP': '56',
-    'JUMPI': '57',
-    'JUMPDEST': '5b',
-    'PUSH': hex(0x60 + ADDRESS_LENGTH - 1)[2:],
-    'DUP1': '80',
-    'DUP2': '81',
-    'SWAP1': '90',
-    'RETURN': 'f3'
-}
-
-
-def dec_to_hex(number: int, pad: int = 2 * ADDRESS_LENGTH):
-    return '0x{0:0{1}X}'.format(number, pad)[2:]
-
-
-class Opcode:
-    id: int
-    name: str
-    extra_value: Any
-    __counter = 0
-
-    def __init__(self, name: str, extra_value=None):
-        self.id = Opcode.__counter
-        Opcode.__counter += 1
-        self.name = name
-        if extra_value is not None:
-            self.extra_value = extra_value
-        elif name == 'PUSH':
-            self.extra_value = dec_to_hex(0)
-        else:
-            self.extra_value = None
-        if name == 'PUSH':
-            Opcode.__counter += ADDRESS_LENGTH
-
-    def get_str(self):
-        return f'{getInstructionCode[self.name]}{"" if self.name != "PUSH" else self.extra_value}'
-
-    @staticmethod
-    def reset_counter():
-        Opcode.__counter = 0
-
-
-class OpcodeList:
-    list: List[Opcode]
-
-    def __init__(self):
-        self.list = []
-
-    def add(self, name: str, extra_value=None):
-        self.list.append(Opcode(name, extra_value))
-
-    def get_str(self):
-        res = ''
-        for oc in self.list:
-            res += oc.get_str()
-        return res
-
-
-class Context:
-    counter: int
-    nameByNum: dict
-    numByName: dict
-    is_prog: bool = False
-
-    def __init__(self):
-        # ZERO reserved for prev gap
-        # ONE reserved for atom countere
-        # TWO reserved for back address
-        self.counter = FRAME_SERVICE_ATOMS
-        self.nameByNum = {}
-        self.numByName = {}
-
-    def get_atom_addr(self, name: str):
-        is_added = False
-        if name not in self.numByName:
-            is_added = True
-            self.numByName[name] = self.counter
-            self.nameByNum[self.counter] = name
-            self.counter += 1
-        return self.numByName[name] * 32, is_added
-
 
 class Generator:
     opcodes: OpcodeList
 
     def __init__(self, ast: AST):
-        self.opcodes: OpcodeList = OpcodeList()
+        self.opcodes: OpcodeList = OpcodeList(ADDRESS_LENGTH)
 
         VirtualStackHelper.init_stack(self.opcodes)
 
         # Set jump to main program body
-        self.opcodes.add('PUSH', dec_to_hex(0))
+        self.opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
         jump_to_prog_start_i = len(self.opcodes.list) - 1
         self.opcodes.add('JUMP')
 
         prog_body = None
         for el in ast.root.child_nodes:
-            context = Context()
+            context = Context(FRAME_SERVICE_ATOMS)
 
             if el.child_nodes[0].value == 'prog':
                 prog_body = el
                 context.is_prog = True
                 # Jump from header to prog body
                 self.opcodes.add('JUMPDEST')
-                self.opcodes.list[jump_to_prog_start_i].extra_value = dec_to_hex(self.opcodes.list[-1].id)
+                self.opcodes.list[jump_to_prog_start_i].extra_value = dec_to_hex(self.opcodes.list[-1].id,
+                                                                                 2 * ADDRESS_LENGTH)
 
-                self.opcodes.add('PUSH', dec_to_hex(0))
+                self.opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
                 prog_atom_count = len(self.opcodes.list) - 1
                 VirtualStackHelper.load_cur_atom_counter_addr(self.opcodes)
                 self.opcodes.add('MSTORE')
 
                 process_code_block(el.child_nodes[1], context, self.opcodes)
 
-                self.opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS)
+                self.opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS,
+                                                                            2 * ADDRESS_LENGTH)
 
             else:
                 Declared.declare(el, context, self.opcodes)
 
     def __validate(self, code: str):
-        for c in code:
-            if c not in '1234567890abcdefABCDEF':
-                return False
-
-        instruction_codes = [getInstructionCode[key] for key in getInstructionCode]
-
-        i = 0
-        while i < len(code):
-            cur_code = code[i] + code[i + 1]
-            i += 2
-            if cur_code not in instruction_codes:
-                return False
-            if cur_code == getInstructionCode['PUSH']:
-                i += 2 * ADDRESS_LENGTH
-
+        # ToDo: make normal ByteCode validation
         return True
 
     def get_byte_code(self):
@@ -245,7 +130,7 @@ def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
 
 def process_literal(call_body: AstNode, opcodes: OpcodeList):
     assert call_body.type == AstNodeType.Literal
-    value = dec_to_hex(call_body.value)
+    value = dec_to_hex(call_body.value, 2 * ADDRESS_LENGTH)
     opcodes.add('PUSH', value)
 
 
@@ -273,12 +158,12 @@ class Declared:
         back_address = len(opcodes.list) - 1
 
         # Jump into the function
-        opcodes.add('PUSH', dec_to_hex(Declared.addr_by_name[call_body.child_nodes[0].value]))
+        opcodes.add('PUSH', dec_to_hex(Declared.addr_by_name[call_body.child_nodes[0].value], 2 * ADDRESS_LENGTH))
         opcodes.add('JUMP')
 
         # Prepare back address, part 2
         opcodes.add('JUMPDEST')
-        opcodes.list[back_address].extra_value = dec_to_hex(opcodes.list[-1].id)
+        opcodes.list[back_address].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * ADDRESS_LENGTH)
 
     @staticmethod
     def declare(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -314,7 +199,7 @@ class Declared:
         process_call(call_body.child_nodes[3], ctx, opcodes)
 
         # Set atom counter, part 2
-        opcodes.list[func_atom_counter].extra_value = dec_to_hex(ctx.counter - FRAME_SERVICE_ATOMS)
+        opcodes.list[func_atom_counter].extra_value = dec_to_hex(ctx.counter - FRAME_SERVICE_ATOMS, 2 * ADDRESS_LENGTH)
 
         # Remove frame and leave function
         VirtualStackHelper.load_back_address(opcodes)
@@ -333,7 +218,7 @@ class BuiltIns:
 
         process_call(body.child_nodes[1], ctx, opcodes)
 
-        opcodes.add('PUSH', dec_to_hex(0x20))
+        opcodes.add('PUSH', dec_to_hex(0x20, 2 * ADDRESS_LENGTH))
         opcodes.add('MUL')
 
         opcodes.add('CALLDATALOAD')
@@ -359,7 +244,7 @@ class BuiltIns:
         # TRUE BLOCK
         opcodes.add('JUMPDEST')
         block_id = opcodes.list[-1].id
-        opcodes.list[jump_from_check_to_true].extra_value = dec_to_hex(block_id)
+        opcodes.list[jump_from_check_to_true].extra_value = dec_to_hex(block_id, 2 * ADDRESS_LENGTH)
         process_call(body.child_nodes[2], ctx, opcodes)
         opcodes.add('PUSH', )
         jump_from_true_to_end = len(opcodes.list) - 1
@@ -367,7 +252,7 @@ class BuiltIns:
         # FALSE BLOCK
         opcodes.add('JUMPDEST')
         block_id = opcodes.list[-1].id
-        opcodes.list[jump_from_check_to_false].extra_value = dec_to_hex(block_id)
+        opcodes.list[jump_from_check_to_false].extra_value = dec_to_hex(block_id, 2 * ADDRESS_LENGTH)
         if len(body.child_nodes) == 4:
             process_call(body.child_nodes[3], ctx, opcodes)
         opcodes.add('PUSH')
@@ -376,8 +261,8 @@ class BuiltIns:
         # END
         opcodes.add('JUMPDEST')
         block_id = opcodes.list[-1].id
-        opcodes.list[jump_from_true_to_end].extra_value = dec_to_hex(block_id)
-        opcodes.list[jump_from_false_to_end].extra_value = dec_to_hex(block_id)
+        opcodes.list[jump_from_true_to_end].extra_value = dec_to_hex(block_id, 2 * ADDRESS_LENGTH)
+        opcodes.list[jump_from_false_to_end].extra_value = dec_to_hex(block_id, 2 * ADDRESS_LENGTH)
 
     @staticmethod
     def setq(body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -418,7 +303,7 @@ class BuiltIns:
         assert len(body.child_nodes) == 3
 
         opcodes.add('EQ')
-        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
         opcodes.add('EQ')
 
     @staticmethod
@@ -429,7 +314,7 @@ class BuiltIns:
         OUTPUT (1): | EoS | !value (bool)
         """
         assert len(body.child_nodes) == 2
-        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
         opcodes.add('EQ')
 
     @staticmethod
@@ -487,10 +372,10 @@ class BuiltIns:
         """
         assert len(body.child_nodes) == 2
         if ctx.is_prog:
-            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
             opcodes.add('MSTORE')
-            opcodes.add('PUSH', dec_to_hex(32))
-            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('PUSH', dec_to_hex(32, 2 * ADDRESS_LENGTH))
+            opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
             opcodes.add('RETURN')
         else:
             VirtualStackHelper.load_back_address(opcodes)
@@ -507,8 +392,8 @@ class BuiltIns:
         OUTPUT: | EoS |
         """
         assert len(body.child_nodes) == 1
-        opcodes.add('PUSH', dec_to_hex(0))
-        opcodes.add('JUMP', dec_to_hex(BuiltIns.current_while))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
+        opcodes.add('JUMP', dec_to_hex(BuiltIns.current_while, 2 * ADDRESS_LENGTH))
         pass
 
     @staticmethod
@@ -521,8 +406,8 @@ class BuiltIns:
         prev_while = BuiltIns.current_while
         BuiltIns.current_while = BuiltIns.while_count
         BuiltIns.while_count += 1
-        opcodes.add('JUMPDEST', dec_to_hex(BuiltIns.current_while))
-        jumpdest_to_condition_check_id = dec_to_hex(opcodes.list[-1].id)
+        opcodes.add('JUMPDEST', dec_to_hex(BuiltIns.current_while, 2 * ADDRESS_LENGTH))
+        jumpdest_to_condition_check_id = dec_to_hex(opcodes.list[-1].id, 2 * ADDRESS_LENGTH)
         process_call(body.child_nodes[1], ctx, opcodes)
         # if true: jump to while body
         opcodes.add('PUSH')
@@ -535,16 +420,17 @@ class BuiltIns:
 
         # while body
         opcodes.add('JUMPDEST')
-        opcodes.list[jump_to_while_body].extra_value = dec_to_hex(opcodes.list[-1].id)
+        opcodes.list[jump_to_while_body].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * ADDRESS_LENGTH)
         process_call(body.child_nodes[2], ctx, opcodes)
         opcodes.add('PUSH', jumpdest_to_condition_check_id)
         opcodes.add('JUMP')
         # while end
         opcodes.add('JUMPDEST')
-        opcodes.list[jump_to_while_end].extra_value = dec_to_hex(opcodes.list[-1].id)
+        opcodes.list[jump_to_while_end].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * ADDRESS_LENGTH)
         for i in range(len(opcodes.list)):
-            if opcodes.list[i].name == 'JUMP' and opcodes.list[i].extra_value == dec_to_hex(BuiltIns.current_while):
-                opcodes.list[i - 1].extra_value = dec_to_hex(opcodes.list[-1].id)
+            if opcodes.list[i].name == 'JUMP' and opcodes.list[i].extra_value == dec_to_hex(BuiltIns.current_while,
+                                                                                            2 * ADDRESS_LENGTH):
+                opcodes.list[i - 1].extra_value = dec_to_hex(opcodes.list[-1].id, 2 * ADDRESS_LENGTH)
                 opcodes.list[i].extra_value = None
         BuiltIns.current_while = prev_while
 
@@ -659,20 +545,20 @@ class VirtualStackHelper:
         NO SIDE EFFECTS
         """
         # Set ZERO FRAME (prog frame) gap = 0x40
-        opcodes.add('PUSH', dec_to_hex(0x40))
-        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('PUSH', dec_to_hex(0x40, 2 * ADDRESS_LENGTH))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
         opcodes.add('MSTORE')
         # Init zero frame
         # Set start of previous frame and back address as 0x00
-        opcodes.add('PUSH', dec_to_hex(0x0))
+        opcodes.add('PUSH', dec_to_hex(0x0, 2 * ADDRESS_LENGTH))
         opcodes.add('DUP1')
-        opcodes.add('PUSH', dec_to_hex(0x40))
+        opcodes.add('PUSH', dec_to_hex(0x40, 2 * ADDRESS_LENGTH))
         opcodes.add('MSTORE')
-        opcodes.add('PUSH', dec_to_hex(0x40 + 0x40))
+        opcodes.add('PUSH', dec_to_hex(0x40 + 0x40, 2 * ADDRESS_LENGTH))
         opcodes.add('MSTORE')
         # Set counter of atoms as 0x00
-        opcodes.add('PUSH', dec_to_hex(0x0))
-        opcodes.add('PUSH', dec_to_hex(0x40 + 0x20))
+        opcodes.add('PUSH', dec_to_hex(0x0, 2 * ADDRESS_LENGTH))
+        opcodes.add('PUSH', dec_to_hex(0x40 + 0x20, 2 * ADDRESS_LENGTH))
         opcodes.add('MSTORE')
 
     @staticmethod
@@ -691,7 +577,7 @@ class VirtualStackHelper:
         OUTPUT: | EoS | Address of Atom on provided address
         """
         VirtualStackHelper.load_cur_gap(opcodes)
-        opcodes.add('PUSH', dec_to_hex(atom_address))
+        opcodes.add('PUSH', dec_to_hex(atom_address, 2 * ADDRESS_LENGTH))
         opcodes.add('ADD')
 
     @staticmethod
@@ -709,7 +595,7 @@ class VirtualStackHelper:
         INPUT:  | EoS |
         OUTPUT: | EoS | Gap of current frame |
         """
-        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
         opcodes.add('MLOAD')
 
     @staticmethod
@@ -718,7 +604,7 @@ class VirtualStackHelper:
         INPUT:  | EoS | New gap
         OUTPUT: | EoS |
         """
-        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
         opcodes.add('MSTORE')
 
     @staticmethod
@@ -737,7 +623,7 @@ class VirtualStackHelper:
         OUTPUT: | EoS | Address of Current Atom counter
         """
         VirtualStackHelper.load_cur_gap(opcodes)
-        opcodes.add('PUSH', dec_to_hex(0x20))
+        opcodes.add('PUSH', dec_to_hex(0x20, 2 * ADDRESS_LENGTH))
         opcodes.add('ADD')
 
     @staticmethod
@@ -756,7 +642,7 @@ class VirtualStackHelper:
         OUTPUT: | EoS | Address of Current Back address
         """
         VirtualStackHelper.load_cur_gap(opcodes)
-        opcodes.add('PUSH', dec_to_hex(0x40))
+        opcodes.add('PUSH', dec_to_hex(0x40, 2 * ADDRESS_LENGTH))
         opcodes.add('ADD')
 
     @staticmethod
@@ -783,10 +669,10 @@ class VirtualStackHelper:
         INPUT:  | EoS |
         OUTPUT: | EoS | Size of current frame
         """
-        opcodes.add('PUSH', dec_to_hex(FRAME_SERVICE_ATOMS * 0x20))
+        opcodes.add('PUSH', dec_to_hex(FRAME_SERVICE_ATOMS * 0x20, 2 * ADDRESS_LENGTH))
 
         VirtualStackHelper.load_cur_atom_counter(opcodes)
-        opcodes.add('PUSH', dec_to_hex(32))
+        opcodes.add('PUSH', dec_to_hex(32, 2 * ADDRESS_LENGTH))
         opcodes.add('MUL')
 
         opcodes.add('ADD')
