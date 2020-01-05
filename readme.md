@@ -24,3 +24,6 @@ python3 main.py input.fst
 ```
 python3 main.py input.fst -o out.ebc
 ```
+## Plans and perspectives
+- Make automated tests of every new version of compiler using GitHub Actions of GitLab CI/CD
+- Make automated assembly of compiler into one `.py` file and prepare it to sending on Stepik (where judge system placed)
