@@ -7,50 +7,53 @@ from memory_stack import VirtualStackHelper
 from opcodes import OpcodeList
 from singleton import Singleton
 
-ADDRESS_LENGTH = 32
-FRAME_SERVICE_ATOMS = 3
-assert 32 >= ADDRESS_LENGTH >= 1
-assert FRAME_SERVICE_ATOMS >= 2
-
 
 class Generator(metaclass=Singleton):
     opcodes: OpcodeList
+    address_length: int
+    frame_service_atoms: int
 
-    def __init__(self, ast: AST):
-        self.opcodes: OpcodeList = OpcodeList(ADDRESS_LENGTH)
+    def __init__(self, ast: AST, address_length=2, frame_service_atoms=3):
+        self.address_length = address_length
+        self.frame_service_atoms = frame_service_atoms
+
+        assert 32 >= address_length >= 1
+        assert frame_service_atoms >= 2
+
+        self.opcodes: OpcodeList = OpcodeList(address_length)
         self.__ast = ast
 
         # Init Virtual stack and function Singletons
-        VirtualStackHelper(ADDRESS_LENGTH, FRAME_SERVICE_ATOMS).init_stack(self.opcodes)
-        SpecialForms(ADDRESS_LENGTH)
-        BuiltIns(ADDRESS_LENGTH)
-        Declared(ADDRESS_LENGTH, FRAME_SERVICE_ATOMS)
+        VirtualStackHelper(address_length, frame_service_atoms).init_stack(self.opcodes)
+        SpecialForms(address_length)
+        BuiltIns(self.address_length)
+        Declared(address_length, frame_service_atoms)
 
     def run(self):
         # Set jump to main program body
-        self.opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
+        self.opcodes.add('PUSH', dec_to_hex(0, 2 * self.address_length))
         jump_to_prog_start_i = len(self.opcodes.list) - 1
         self.opcodes.add('JUMP')
 
         for el in self.__ast.root.child_nodes:
-            context = Context(FRAME_SERVICE_ATOMS)
+            context = Context(self.frame_service_atoms)
 
             if el.child_nodes[0].value == 'prog':
                 context.is_prog = True
                 # Jump from header to prog body
                 self.opcodes.add('JUMPDEST')
                 self.opcodes.list[jump_to_prog_start_i].extra_value = dec_to_hex(self.opcodes.list[-1].id,
-                                                                                 2 * ADDRESS_LENGTH)
+                                                                                 2 * self.address_length)
 
-                self.opcodes.add('PUSH', dec_to_hex(0, 2 * ADDRESS_LENGTH))
+                self.opcodes.add('PUSH', dec_to_hex(0, 2 * self.address_length))
                 prog_atom_count = len(self.opcodes.list) - 1
                 VirtualStackHelper().load_cur_atom_counter_addr(self.opcodes)
                 self.opcodes.add('MSTORE')
 
                 self.process_code_block(el.child_nodes[1], context, self.opcodes)
 
-                self.opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS,
-                                                                            2 * ADDRESS_LENGTH)
+                self.opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - self.frame_service_atoms,
+                                                                            2 * self.address_length)
 
             else:
                 self.declare_function(el, context, self.opcodes)
@@ -98,7 +101,7 @@ class Generator(metaclass=Singleton):
 
     def process_literal(self, call_body: AstNode, opcodes: OpcodeList):
         assert call_body.type == AstNodeType.Literal
-        value = dec_to_hex(call_body.value, 2 * ADDRESS_LENGTH)
+        value = dec_to_hex(call_body.value, 2 * self.address_length)
         opcodes.add('PUSH', value)
 
     def process_atom(self, call_body: AstNode, ctx: Context, opcodes: OpcodeList):
@@ -140,7 +143,8 @@ class Generator(metaclass=Singleton):
         self.process_call(call_body.child_nodes[3], ctx, opcodes)
 
         # Set atom counter, part 2
-        opcodes.list[func_atom_counter].extra_value = dec_to_hex(ctx.counter - FRAME_SERVICE_ATOMS, 2 * ADDRESS_LENGTH)
+        opcodes.list[func_atom_counter].extra_value = dec_to_hex(ctx.counter - self.frame_service_atoms,
+                                                                 2 * self.address_length)
 
         # Remove frame and leave function
         VirtualStackHelper().load_back_address(opcodes)
