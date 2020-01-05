@@ -1,8 +1,7 @@
 # F-Stroke Language Compiler
 This is a solution for ![an assignment](assignments.pdf) from the 2nd qualifying stage of the NTI Contest in Software Engineering for Financial Technology.
 ## What is F-Stroke?
-> **F-Stroke** is programming language, which supports ![functional programming](https://en.wikipedia.org/wiki/Functional_programming). Being simplified and modified version of Lisp language, F-Stroke takes base syntax and semantics from it
-> - Description of assignment
+> **F-Stroke** is programming language, which supports ![functional programming](https://en.wikipedia.org/wiki/Functional_programming). Being simplified and modified version of Lisp language, F-Stroke takes base syntax and semantics from it. - Description of assignment
 ## Usage
 ```
 usage: main.py [-h] [-o O] [--hex-size HEX_SIZE] input
