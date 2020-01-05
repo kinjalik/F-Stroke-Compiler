@@ -1,9 +1,6 @@
 from typing import Any, List
 
 from AST import AST, AstNode, AstNodeType
-from singleton import Singleton, SingletonArgumentException
-from fst_functions.builtin import BuiltIns
-from fst_functions.declared import Declared
 
 ADDRESS_LENGTH = 32
 FRAME_SERVICE_ATOMS = 3
@@ -115,30 +112,25 @@ class Context:
         return self.numByName[name] * 32, is_added
 
 
-class ByteCodeGenerator(metaclass=Singleton):
+class Generator:
     opcodes: OpcodeList
-    ast: AST
-    is_code_generated: bool = False
 
     def __init__(self, ast: AST):
-
-        if ast is None:
-            raise SingletonArgumentException('AST not provided to byte code generator')
-
         self.opcodes: OpcodeList = OpcodeList()
-        VirtualStackHelper.init_stack(self.opcodes)
-        self.ast = ast
 
-    def run(self):
+        VirtualStackHelper.init_stack(self.opcodes)
+
         # Set jump to main program body
         self.opcodes.add('PUSH', dec_to_hex(0))
         jump_to_prog_start_i = len(self.opcodes.list) - 1
         self.opcodes.add('JUMP')
 
-        for el in self.ast.root.child_nodes:
+        prog_body = None
+        for el in ast.root.child_nodes:
             context = Context()
 
             if el.child_nodes[0].value == 'prog':
+                prog_body = el
                 context.is_prog = True
                 # Jump from header to prog body
                 self.opcodes.add('JUMPDEST')
@@ -149,18 +141,14 @@ class ByteCodeGenerator(metaclass=Singleton):
                 VirtualStackHelper.load_cur_atom_counter_addr(self.opcodes)
                 self.opcodes.add('MSTORE')
 
-                ByteCodeGenerator().process_code_block(el.child_nodes[1], context)
+                process_code_block(el.child_nodes[1], context, self.opcodes)
 
                 self.opcodes.list[prog_atom_count].extra_value = dec_to_hex(context.counter - FRAME_SERVICE_ATOMS)
 
             else:
                 Declared.declare(el, context, self.opcodes)
 
-        self.is_code_generated = True
-        return self
-
-    @staticmethod
-    def __validate(code: str):
+    def __validate(self, code: str):
         for c in code:
             if c not in '1234567890abcdefABCDEF':
                 return False
@@ -178,92 +166,473 @@ class ByteCodeGenerator(metaclass=Singleton):
 
         return True
 
-    def get_str(self):
-        assert self.is_code_generated == True
-
+    def get_byte_code(self):
         byte_code = self.opcodes.get_str()
         assert self.__validate(byte_code)
         return byte_code
 
-    def process_code_block(self, prog_body: AstNode, ctx: Context):
-        # assert prog_body.type == AstNodeType.List
-        for call in prog_body.child_nodes:
-            self.process_call(call, ctx)
 
-    def process_call(self, call_body: AstNode, ctx: Context):
-        # Processing syntax features: literals, atoms
-        if call_body.type == AstNodeType.Literal:
-            return self.process_literal(call_body)
+def process_code_block(prog_body: AstNode, ctx: Context, opcodes: OpcodeList):
+    # assert prog_body.type == AstNodeType.List
+    for call in prog_body.child_nodes:
+        process_call(call, ctx, opcodes)
 
-        if call_body.type == AstNodeType.Atom:
-            return self.process_atom(call_body, ctx)
 
-        # Processing block of code
-        if call_body.type == AstNodeType.List and call_body.child_nodes[0].type == AstNodeType.List:
-            return self.process_code_block(call_body, ctx)
+def process_call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+    # Processing syntax features: literals, atoms
+    if call_body.type == AstNodeType.Literal:
+        return process_literal(call_body, opcodes)
 
-        # Processing pre-built functions
-        name = call_body.child_nodes[0].value
-        if name == 'read':
-            return BuiltIns.read(call_body, ctx, self.opcodes)
-        elif name == 'setq':
-            return BuiltIns.setq(call_body, ctx, self.opcodes)
-        elif name == 'cond':
-            return BuiltIns.cond(call_body, ctx, self.opcodes)
-        elif name == 'while':
-            return BuiltIns.wwhile(call_body, ctx, self.opcodes)
-        elif name == 'break':
-            return BuiltIns.bbreak(call_body, ctx, self.opcodes)
-        elif name == 'return':
-            return BuiltIns.rreturn(call_body, ctx, self.opcodes)
-        elif name == 'plus':
-            return BuiltIns.plus(call_body, ctx, self.opcodes)
-        elif name == 'minus':
-            return BuiltIns.minus(call_body, ctx, self.opcodes)
-        elif name == 'times':
-            return BuiltIns.times(call_body, ctx, self.opcodes)
-        elif name == 'divide':
-            return BuiltIns.divide(call_body, ctx, self.opcodes)
-        elif name == 'equal':
-            return BuiltIns.equal(call_body, ctx, self.opcodes)
-        elif name == 'nonequal':
-            return BuiltIns.nonequal(call_body, ctx, self.opcodes)
-        elif name == 'less':
-            return BuiltIns.less(call_body, ctx, self.opcodes)
-        elif name == 'lesseq':
-            return BuiltIns.lesseq(call_body, ctx, self.opcodes)
-        elif name == 'greater':
-            return BuiltIns.greater(call_body, ctx, self.opcodes)
-        elif name == 'greatereq':
-            return BuiltIns.greatereq(call_body, ctx, self.opcodes)
-        elif name == 'or':
-            return BuiltIns.oor(call_body, ctx, self.opcodes)
-        elif name == 'and':
-            return BuiltIns.aand(call_body, ctx, self.opcodes)
-        elif name == 'not':
-            return BuiltIns.nnot(call_body, ctx, self.opcodes)
+    if call_body.type == AstNodeType.Atom:
+        return process_atom(call_body, ctx, opcodes)
 
-        if name in Declared.addr_by_name:
-            return Declared.call(call_body, ctx, self.opcodes)
+    # Processing block of code
+    if call_body.type == AstNodeType.List and call_body.child_nodes[0].type == AstNodeType.List:
+        return process_code_block(call_body, ctx, opcodes)
 
-        # print(f'No builtin found for {name}')
+    # Processing pre-built functions
+    name = call_body.child_nodes[0].value
+    if name == 'read':
+        return BuiltIns.read(call_body, ctx, opcodes)
+    elif name == 'setq':
+        return BuiltIns.setq(call_body, ctx, opcodes)
+    elif name == 'cond':
+        return BuiltIns.cond(call_body, ctx, opcodes)
+    elif name == 'while':
+        return BuiltIns.wwhile(call_body, ctx, opcodes)
+    elif name == 'break':
+        return BuiltIns.bbreak(call_body, ctx, opcodes)
+    elif name == 'return':
+        return BuiltIns.rreturn(call_body, ctx, opcodes)
+    elif name == 'plus':
+        return BuiltIns.plus(call_body, ctx, opcodes)
+    elif name == 'minus':
+        return BuiltIns.minus(call_body, ctx, opcodes)
+    elif name == 'times':
+        return BuiltIns.times(call_body, ctx, opcodes)
+    elif name == 'divide':
+        return BuiltIns.divide(call_body, ctx, opcodes)
+    elif name == 'equal':
+        return BuiltIns.equal(call_body, ctx, opcodes)
+    elif name == 'nonequal':
+        return BuiltIns.nonequal(call_body, ctx, opcodes)
+    elif name == 'less':
+        return BuiltIns.less(call_body, ctx, opcodes)
+    elif name == 'lesseq':
+        return BuiltIns.lesseq(call_body, ctx, opcodes)
+    elif name == 'greater':
+        return BuiltIns.greater(call_body, ctx, opcodes)
+    elif name == 'greatereq':
+        return BuiltIns.greatereq(call_body, ctx, opcodes)
+    elif name == 'or':
+        return BuiltIns.oor(call_body, ctx, opcodes)
+    elif name == 'and':
+        return BuiltIns.aand(call_body, ctx, opcodes)
+    elif name == 'not':
+        return BuiltIns.nnot(call_body, ctx, opcodes)
 
-        return 0
-        # print(name)
-        # for i in range(1, len(call_body.child_nodes)):
-        #     arg = call_body.child_nodes[i]
-        #     print(arg.type)
+    if name in Declared.addr_by_name:
+        return Declared.call(call_body, ctx, opcodes)
 
-    def process_literal(self, call_body: AstNode):
-        assert call_body.type == AstNodeType.Literal
-        value = dec_to_hex(call_body.value)
-        self.opcodes.add('PUSH', value)
+    # print(f'No builtin found for {name}')
 
-    def process_atom(self, call_body: AstNode, ctx: Context):
-        assert call_body.type == AstNodeType.Atom
-        atom_name = call_body.value
-        atom_address, is_new = ctx.get_atom_addr(atom_name)
-        VirtualStackHelper.load_atom_value(self.opcodes, atom_address)
+    return 0
+    # print(name)
+    # for i in range(1, len(call_body.child_nodes)):
+    #     arg = call_body.child_nodes[i]
+    #     print(arg.type)
+
+
+def process_literal(call_body: AstNode, opcodes: OpcodeList):
+    assert call_body.type == AstNodeType.Literal
+    value = dec_to_hex(call_body.value)
+    opcodes.add('PUSH', value)
+
+
+def process_atom(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+    assert call_body.type == AstNodeType.Atom
+    atom_name = call_body.value
+    atom_address, is_new = ctx.get_atom_addr(atom_name)
+    VirtualStackHelper.load_atom_value(opcodes, atom_address)
+
+
+class Declared:
+    addr_by_name: dict = {}
+
+    @staticmethod
+    def call(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+        assert call_body.type == AstNodeType.List
+        assert call_body.child_nodes[0].type == AstNodeType.Literal or call_body.child_nodes[0].type == AstNodeType.Atom
+
+        # Prepare arguments
+        for i in range(1, len(call_body.child_nodes)):
+            process_call(call_body.child_nodes[i], ctx, opcodes)
+
+        # Prepare back address, part 1
+        opcodes.add('PUSH')
+        back_address = len(opcodes.list) - 1
+
+        # Jump into the function
+        opcodes.add('PUSH', dec_to_hex(Declared.addr_by_name[call_body.child_nodes[0].value]))
+        opcodes.add('JUMP')
+
+        # Prepare back address, part 2
+        opcodes.add('JUMPDEST')
+        opcodes.list[back_address].extra_value = dec_to_hex(opcodes.list[-1].id)
+
+    @staticmethod
+    def declare(call_body: AstNode, ctx: Context, opcodes: OpcodeList):
+        assert call_body.type == AstNodeType.List
+        assert call_body.child_nodes[0].type == AstNodeType.Literal or call_body.child_nodes[0].type == AstNodeType.Atom
+        assert call_body.child_nodes[0].value == 'func'
+        """
+        INPUT:  | EoS | Arg1 | ... | ArgN | Back address
+        OUTPUT: | EoS |
+        """
+        # Set entry point
+        opcodes.add('JUMPDEST')
+        Declared.addr_by_name[call_body.child_nodes[1].value] = opcodes.list[-1].id
+
+        # Make new stack frame
+        # Back address gone
+        VirtualStackHelper.add_frame(opcodes)
+
+        # Set atom counter, part 1
+        opcodes.add('PUSH')
+        func_atom_counter = len(opcodes.list) - 1
+        VirtualStackHelper.load_cur_atom_counter_addr(opcodes)
+        opcodes.add('MSTORE')
+
+        # Declare arguments in context
+        # Args gone
+        for arg_name in reversed(call_body.child_nodes[2].child_nodes):
+            assert arg_name.type == AstNodeType.Atom
+            address, is_new = ctx.get_atom_addr(arg_name.value)
+            VirtualStackHelper.store_atom_value(opcodes, address)
+
+        # Generate body
+        process_call(call_body.child_nodes[3], ctx, opcodes)
+
+        # Set atom counter, part 2
+        opcodes.list[func_atom_counter].extra_value = dec_to_hex(ctx.counter - FRAME_SERVICE_ATOMS)
+
+        # Remove frame and leave function
+        VirtualStackHelper.load_back_address(opcodes)
+        VirtualStackHelper.remove_frame(opcodes)
+        opcodes.add('JUMP')
+
+
+class BuiltIns:
+    @staticmethod
+    def read(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        """
+        INPUT  (0): | EoS |
+        OUTPUT (1): | EoS | Value from input
+        """
+        assert len(body.child_nodes) == 2
+
+        process_call(body.child_nodes[1], ctx, opcodes)
+
+        opcodes.add('PUSH', dec_to_hex(0x20))
+        opcodes.add('MUL')
+
+        opcodes.add('CALLDATALOAD')
+
+    @staticmethod
+    def cond(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        """
+        INPUT  (0): | EoS |
+        OUTPUT (0): | EoS |
+        """
+        assert len(body.child_nodes) == 3 or len(body.child_nodes) == 4
+
+        # Conditions check
+        process_call(body.child_nodes[1], ctx, opcodes)
+        # JUMP TO TRUE
+        opcodes.add('PUSH')
+        jump_from_check_to_true = len(opcodes.list) - 1
+        opcodes.add('JUMPI')
+        # JUMP TO ELSE
+        opcodes.add('PUSH')
+        jump_from_check_to_false = len(opcodes.list) - 1
+        opcodes.add('JUMP')
+        # TRUE BLOCK
+        opcodes.add('JUMPDEST')
+        block_id = opcodes.list[-1].id
+        opcodes.list[jump_from_check_to_true].extra_value = dec_to_hex(block_id)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        opcodes.add('PUSH', )
+        jump_from_true_to_end = len(opcodes.list) - 1
+        opcodes.add('JUMP')
+        # FALSE BLOCK
+        opcodes.add('JUMPDEST')
+        block_id = opcodes.list[-1].id
+        opcodes.list[jump_from_check_to_false].extra_value = dec_to_hex(block_id)
+        if len(body.child_nodes) == 4:
+            process_call(body.child_nodes[3], ctx, opcodes)
+        opcodes.add('PUSH')
+        jump_from_false_to_end = len(opcodes.list) - 1
+        opcodes.add('JUMP')
+        # END
+        opcodes.add('JUMPDEST')
+        block_id = opcodes.list[-1].id
+        opcodes.list[jump_from_true_to_end].extra_value = dec_to_hex(block_id)
+        opcodes.list[jump_from_false_to_end].extra_value = dec_to_hex(block_id)
+
+    @staticmethod
+    def setq(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        process_call(body.child_nodes[2], ctx, opcodes)
+        """
+        INPUT  (1): | EoS | New Atom value
+        OUTPUT (0): | EoS |
+        """
+
+        assert len(body.child_nodes) == 3
+
+        atom_name = body.child_nodes[1].value
+        address, is_new = ctx.get_atom_addr(atom_name)
+        VirtualStackHelper.store_atom_value(opcodes, address)
+
+    @staticmethod
+    def equal(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2 
+        OUTPUT (1): | EoS | Does value 1 equals value 2 (bool)
+        """
+
+        assert len(body.child_nodes) == 3
+
+        opcodes.add('EQ')
+
+    @staticmethod
+    def nonequal(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2
+        OUTPUT (1): | EoS | Does Value 1 differs from Value 2 (bool)
+        """
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+
+        assert len(body.child_nodes) == 3
+
+        opcodes.add('EQ')
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('EQ')
+
+    @staticmethod
+    def nnot(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        process_call(body.child_nodes[1], ctx, opcodes)
+        """
+        INPUT  (1): | EoS | value (bool)
+        OUTPUT (1): | EoS | !value (bool)
+        """
+        assert len(body.child_nodes) == 2
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('EQ')
+
+    @staticmethod
+    def plus(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2 
+        OUTPUT (1): | EoS | Sum of values
+        """
+        assert len(body.child_nodes) == 3
+        opcodes.add('ADD')
+
+    @staticmethod
+    def minus(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2 
+        OUTPUT (1): | EoS | Value 1 - Value 2
+        """
+        assert len(body.child_nodes) == 3
+        opcodes.add('SWAP1')
+        opcodes.add('SUB')
+
+    @staticmethod
+    def times(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2 
+        OUTPUT (1): | EoS | Value 1 * Value 2
+        """
+        assert len(body.child_nodes) == 3
+        opcodes.add('MUL')
+
+    @staticmethod
+    def divide(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2
+        OUTPUT (1): | EoS | Value 1 // Value 2
+        """
+        assert len(body.child_nodes) == 3
+        opcodes.add('SWAP1')
+        opcodes.add('DIV')
+
+    @staticmethod
+    def rreturn(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        process_call(body.child_nodes[1], ctx, opcodes)
+        """
+        INPUT  (1): | EoS | Some value 
+        OUTPUT (0): | EoS | 
+        """
+        assert len(body.child_nodes) == 2
+        if ctx.is_prog:
+            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('MSTORE')
+            opcodes.add('PUSH', dec_to_hex(32))
+            opcodes.add('PUSH', dec_to_hex(0))
+            opcodes.add('RETURN')
+        else:
+            VirtualStackHelper.load_back_address(opcodes)
+            VirtualStackHelper.remove_frame(opcodes)
+            opcodes.add('JUMP')
+
+    while_count = 0
+    current_while = 0
+
+    @staticmethod
+    def bbreak(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        """
+        INPUT:  | EoS |
+        OUTPUT: | EoS |
+        """
+        assert len(body.child_nodes) == 1
+        opcodes.add('PUSH', dec_to_hex(0))
+        opcodes.add('JUMP', dec_to_hex(BuiltIns.current_while))
+        pass
+
+    @staticmethod
+    def wwhile(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        """
+        INPUT:  | EoS |
+        OUTPUT: | EoS |
+        """
+        assert len(body.child_nodes) == 3
+        prev_while = BuiltIns.current_while
+        BuiltIns.current_while = BuiltIns.while_count
+        BuiltIns.while_count += 1
+        opcodes.add('JUMPDEST', dec_to_hex(BuiltIns.current_while))
+        jumpdest_to_condition_check_id = dec_to_hex(opcodes.list[-1].id)
+        process_call(body.child_nodes[1], ctx, opcodes)
+        # if true: jump to while body
+        opcodes.add('PUSH')
+        jump_to_while_body = len(opcodes.list) - 1
+        opcodes.add('JUMPI')
+        # else: jump to while end
+        opcodes.add('PUSH')
+        jump_to_while_end = len(opcodes.list) - 1
+        opcodes.add('JUMP')
+
+        # while body
+        opcodes.add('JUMPDEST')
+        opcodes.list[jump_to_while_body].extra_value = dec_to_hex(opcodes.list[-1].id)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        opcodes.add('PUSH', jumpdest_to_condition_check_id)
+        opcodes.add('JUMP')
+        # while end
+        opcodes.add('JUMPDEST')
+        opcodes.list[jump_to_while_end].extra_value = dec_to_hex(opcodes.list[-1].id)
+        for i in range(len(opcodes.list)):
+            if opcodes.list[i].name == 'JUMP' and opcodes.list[i].extra_value == dec_to_hex(BuiltIns.current_while):
+                opcodes.list[i - 1].extra_value = dec_to_hex(opcodes.list[-1].id)
+                opcodes.list[i].extra_value = None
+        BuiltIns.current_while = prev_while
+
+    @staticmethod
+    def less(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2
+        OUTPUT (1): | EoS | Is Value 1 lesser than Value 2
+        """
+        assert len(body.child_nodes) == 3
+        process_call(body.child_nodes[1], ctx, opcodes)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        # | n | b | EOS |
+        # b < n
+        opcodes.add('GT')
+
+    @staticmethod
+    def lesseq(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2
+        OUTPUT (1): | EoS | Does Value 1 less or equals Value (bool)
+        """
+        assert len(body.child_nodes) == 3
+        process_call(body.child_nodes[1], ctx, opcodes)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        opcodes.add('EQ')
+        process_call(body.child_nodes[1], ctx, opcodes)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        # | n | b | EOS |
+        # b < n
+        opcodes.add('GT')
+        opcodes.add('OR')
+
+    '''
+    ( greater A B )
+    Stack: | B | A | EOS |
+    B < A
+    '''
+
+    @staticmethod
+    def greater(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2 
+        OUTPUT (1): | EoS | Is Value 1 greater than Value 2
+        """
+        assert len(body.child_nodes) == 3
+        opcodes.add('LT')
+
+    @staticmethod
+    def greatereq(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        """
+        INPUT  (2): | EoS | Value 1 | Value 2
+        OUTPUT (1): | EoS | Does Value 1 less or equals Value (bool)
+        """
+        assert len(body.child_nodes) == 3
+        process_call(body.child_nodes[1], ctx, opcodes)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        opcodes.add('EQ')
+        process_call(body.child_nodes[1], ctx, opcodes)
+        process_call(body.child_nodes[2], ctx, opcodes)
+        # | n | b | EOS |
+        # b < n
+        opcodes.add('LT')
+        opcodes.add('OR')
+
+    @staticmethod
+    def oor(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        """
+        INPUT  (2): | EoS | v1 (bool) | v2 (bool) 
+        OUTPUT (1): | EoS | v1 OR v2 (bool)
+        """
+        assert len(body.child_nodes) == 3
+        opcodes.add('OR')
+
+    @staticmethod
+    def aand(body: AstNode, ctx: Context, opcodes: OpcodeList):
+        for i in range(1, 3):
+            process_call(body.child_nodes[i], ctx, opcodes)
+        """
+        INPUT  (2): | EoS | v1 (bool) | v2 (bool) 
+        OUTPUT (1): | EoS | v1 AND v2 (bool)
+        """
+        assert len(body.child_nodes) == 3
+        opcodes.add('AND')
 
 
 '''
