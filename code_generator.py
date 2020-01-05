@@ -13,7 +13,7 @@ class Generator(metaclass=Singleton):
     address_length: int
     frame_service_atoms: int
 
-    def __init__(self, ast: AST, address_length=2, frame_service_atoms=3):
+    def __init__(self, ast: AST, address_length=32, frame_service_atoms=3):
         self.address_length = address_length
         self.frame_service_atoms = frame_service_atoms
 
